@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Kasir — Toko Azzahro</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'] },
+          colors: { brand: '#114232', brandLight: '#EDF2F0', gold: '#D4AF37', goldLight: '#FDF8E7', dark: '#0A2517', grayLight: '#F8F9FB' },
+          animation: { 'fade-up': 'fadeUp 0.2s ease-out', 'fade-in': 'fadeIn 0.2s ease-out', shake: 'shake 0.4s ease-in-out' },
+          keyframes: {
+            fadeUp: { '0%': { opacity: '0', transform: 'translateY(10px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            shake: { '0%, 100%': { transform: 'translateX(0)' }, '25%': { transform: 'translateX(-6px)' }, '75%': { transform: 'translateX(6px)' } }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+
+      #print-area,
+      #print-area * {
+        visibility: visible;
+      }
+
+      #print-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 58mm;
+        padding: 0;
+        margin: 0;
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-grayLight text-gray-800 font-sans antialiased overflow-hidden">
+  <div id="root"></div>
+  <script type="text/babel">
+    const SUPABASE_URL = "https://xliwxtakluemverkgwrv.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXd4dGFrbHVlbXZlcmtnd3J2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1MjEzNTQsImV4cCI6MjA5MjA5NzM1NH0.XaP6ad5rvhA8EMlCSGy6FIoNltBMiDwQ4fLxe9BwVy8";
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    const CATS = ["Semua", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
+    const PAY_METHODS = ["Cash", "Transfer Bank", "QRIS"];
+    const fmt = n => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
+    const fmtDate = d => new Date(d).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+    function Toast({ msg }) { if (!msg) return null; return <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-dark text-white px-5 py-2.5 rounded-full z-[9999] text-sm font-medium shadow-xl whitespace-nowrap animate-fade-up">{msg}</div>; }
+    function Spinner() { return <div className="flex items-center justify-center p-10"><div className="w-8 h-8 border-4 border-gray-200 border-t-gold rounded-full animate-spin"></div></div>; }
+    function Modal({ children, onClose, title, full }) {
+      return (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 transition-opacity animate-fade-in" onClick={onClose}>
+          <div className={`bg-white rounded-t-2xl sm:rounded-2xl flex flex-col animate-fade-up shadow-2xl ${full ? 'w-full h-[90vh] sm:h-[85vh] max-w-4xl' : 'w-full max-w-md max-h-[90vh]'}`} onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b border-gray-100 shrink-0">
+              <h3 className="font-extrabold text-lg text-gray-900">{title}</h3>
+              <button onClick={onClose} className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-full transition-colors text-gray-500 font-bold">✕</button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    const applyPromos = (cart, promos) => {
+      const now = new Date();
+      const active = promos.filter(p => { if (!p.active) return false; if (p.start_date && new Date(p.start_date) > now) return false; if (p.end_date && new Date(p.end_date) < now) return false; return true; });
+      const sub = cart.reduce((s, x) => s + x.price * x.qty, 0);
+      let disc = 0, applied = [];
+      active.forEach(pr => {
+        if (pr.type === "discount") {
+          if (pr.min_purchase && sub < pr.min_purchase) return;
+          let d = pr.disc_type === "pct" ? sub * pr.disc_value / 100 : pr.disc_value;
+          if (pr.max_discount && d > pr.max_discount) d = pr.max_discount;
+          disc += d; applied.push({ name: pr.name, discount: d, id: pr.id });
+        }
+        if (pr.type === "bundling") {
+          if (!(pr.bundle_items || []).every(id => cart.find(x => x.id === id))) return;
+          let d = pr.disc_type === "pct" ? sub * pr.disc_value / 100 : pr.disc_value;
+          if (pr.max_discount && d > pr.max_discount) d = pr.max_discount;
+          disc += d; applied.push({ name: pr.name, discount: d, id: pr.id });
+        }
+      });
+      return { discountTotal: disc, appliedPromos: applied };
+    };
+
+    function PinPad({ onSuccess, cashiers, settings }) {
+      const [pin, setPin] = useState("");
+      const [shake, setShake] = useState(false);
+      const [loading, setLoading] = useState(false);
+
+      const press = async (d) => {
+        if (pin.length >= 6 || loading) return;
+        const next = pin + d; setPin(next);
+        if (next.length >= 4) {
+          const ownerPin = settings?.owner_pin || "9999";
+          const adminPin = settings?.admin_pin || "0000";
+          const kasirPin = settings?.kasir_pin || "1234";
+          if (next === ownerPin) return onSuccess({ role: "owner", name: "Owner" });
+          if (next === adminPin) return onSuccess({ role: "admin", name: "Admin" });
+          if (next === kasirPin) { setLoading(true); try { const { data } = await db.from("cash_sessions").select("*").eq("status", "open").single(); if (data) { onSuccess({ role: "kasir", name: data.cashier_name, session_id: data.id }); } else { onSuccess({ role: "kasir", name: "Kasir", needs_open: true }); } } catch (e) { } setLoading(false); return; }
+          if (next.length >= 6) { setShake(true); setTimeout(() => { setPin(""); setShake(false); }, 600); }
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-dark to-brand flex flex-col items-center justify-center p-6">
+          <div className="text-5xl mb-3">🧾</div>
+          <div className="text-white font-extrabold text-2xl mb-1">Kasir POS</div>
+          <div className="text-white/60 text-sm mb-8 font-medium">{settings?.store_name || "Toko Azzahro"}</div>
+          <div className={`bg-white rounded-3xl p-7 w-full max-w-[320px] shadow-2xl ${shake ? 'animate-shake' : ''}`}>
+            <div className="flex justify-center gap-3 mb-6">
+              {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className={`w-3.5 h-3.5 rounded-full transition-colors ${i < pin.length ? 'bg-dark' : 'bg-gray-200'}`} />)}
+            </div>
+            <div className="grid grid-cols-3 gap-2.5">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, "", 0, "⌫"].map((d, i) => (
+                <button key={i} onClick={() => d === "" ? null : d === "⌫" ? setPin(p => p.slice(0, -1)) : press(String(d))} disabled={d === "" || loading}
+                  className={`py-4 text-xl font-bold rounded-2xl ${d === "" ? 'invisible' : d === "⌫" ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-gray-50 text-dark hover:bg-gray-100 active:bg-gray-200'} transition-colors`}>
+                  {d}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 text-center text-xs text-gray-400 font-medium">Masukkan PIN Akses Kasir</div>
+          </div>
+        </div>
+      );
+    }
+
+    function OpenSession({ onOpened, cashiers, notify }) {
+      const [form, setForm] = useState({ cashier_id: "", opening_amount: "", opened_by: "", notes: "" });
+      const [saving, setSaving] = useState(false);
+      const save = async () => {
+        if (!form.cashier_id || !form.opening_amount || !form.opened_by) return notify("Pilih kasir, PIC, dan uang awal!");
+        setSaving(true);
+        const cashier = cashiers.find(c => c.id === form.cashier_id);
+        const payload = { cashier_id: cashier.id, cashier_name: cashier.name, opened_by: form.opened_by, opening_amount: parseFloat(form.opening_amount), status: "open", notes_open: form.notes };
+        const { data, error } = await db.from("cash_sessions").insert(payload).select().single();
+        setSaving(false); if (error) return notify("Gagal: " + error.message);
+        notify("Sesi kasir dimulai!"); onOpened(data);
+      };
+      return (
+        <div className="min-h-screen bg-grayLight flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-lg border border-gray-100">
+            <h2 className="text-xl font-black text-gray-800 mb-1">▶ Mulai Sesi Kasir</h2>
+            <p className="text-sm text-gray-500 mb-6 font-medium">Isi detail awal sebelum mulai melayani pelanggan.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Pilih Akun Kasir *</label>
+                <select value={form.cashier_id} onChange={e => setForm(f => ({ ...f, cashier_id: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <option value="">-- Pilih --</option>{cashiers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">PIC Pendaftar *</label>
+                <input value={form.opened_by} onChange={e => setForm(f => ({ ...f, opened_by: e.target.value }))} placeholder="Nama admin/owner yg mengizinkan" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Uang Modal Awal (Laci) *</label>
+                <input value={form.opening_amount} onChange={e => setForm(f => ({ ...f, opening_amount: e.target.value }))} type="number" placeholder="cth: 500000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xl font-bold focus:outline-none focus:ring-2 focus:ring-brand/30 text-brand" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Catatan</label>
+                <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Kondisi laci, dsb..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <button onClick={save} disabled={saving} className="w-full py-4 mt-2 bg-brand hover:bg-brand/90 text-white rounded-xl font-bold text-base shadow-md transition-all">{saving ? "Memulai..." : "Mulai Sesi →"}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function AddCustomerModal({ onClose, onSave, notify }) {
+      const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" });
+      const [saving, setSaving] = useState(false);
+
+      const handleSave = async () => {
+        if (!form.name || !form.phone) return notify("Nama & HP wajib diisi!");
+        setSaving(true);
+        const payload = { name: form.name, phone: form.phone, email: form.email, address: form.address, city: form.city, birthdate: form.birthdate || null, gender: form.gender, notes: form.notes };
+        const { data, error } = await db.from("customers").insert(payload).select().single();
+        setSaving(false);
+        if (error) return notify("Gagal: " + error.message);
+        notify("Pelanggan berhasil ditambahkan!");
+        onSave(data);
+      };
+
+      return (
+        <Modal onClose={onClose} title="Tambah Pelanggan Baru">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Jenis Kelamin</label>
+              <div className="flex gap-2">
+                {["Laki-laki", "Perempuan", "—"].map(g => <button key={g} onClick={() => setForm(f => ({ ...f, gender: g === "—" ? "" : g }))} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors border-2 ${form.gender === (g === "—" ? "" : g) ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{g}</button>)}
+              </div>
+            </div>
+            {[{ label: "Nama Lengkap *", key: "name", ph: "Sesuai KTP" }, { label: "No. HP / WA *", key: "phone", ph: "08xxxxxxxxxx", type: "tel" }, { label: "Email", key: "email", ph: "email@domain.com", type: "email" }, { label: "Alamat", key: "address", ph: "Alamat domisili" }, { label: "Kota", key: "city", ph: "cth: Semarang" }, { label: "Tgl Lahir", key: "birthdate", type: "date", ph: "" }, { label: "Catatan", key: "notes", ph: "Alergi / referensi..." }].map(f => <div key={f.key}>
+              <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
+              <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+            </div>)}
+            <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
+              <button onClick={onClose} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
+              <button onClick={handleSave} disabled={saving} className="flex-[2] py-3.5 bg-brand hover:bg-brand/90 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Data"}</button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    function POS({ user, settings, notify, onLogout }) {
+      const [products, setProducts] = useState([]);
+      const [promos, setPromos] = useState([]);
+      const [customers, setCustomers] = useState([]);
+      const [cart, setCart] = useState([]);
+      const [cat, setCat] = useState("Semua");
+      const [search, setSearch] = useState("");
+      const [customer, setCustomer] = useState("");
+      const [txType, setTxType] = useState("Cash");
+      const [cash, setCash] = useState("");
+      const [modal, setModal] = useState(null);
+      const [txData, setTxData] = useState(null);
+      const [variantPicker, setVariantPicker] = useState(null);
+      const [showAddCustomer, setShowAddCustomer] = useState(false);
+      const [loading, setLoading] = useState(true);
+
+      const loadAll = useCallback(async () => {
+        setLoading(true);
+        const [p, pr, c] = await Promise.all([
+          db.from("products").select("*").eq("active", true).order("name"),
+          db.from("promos").select("*").eq("active", true),
+          db.from("customers").select("*").order("name")
+        ]);
+        setProducts(p.data || []); setPromos(pr.data || []); setCustomers(c.data || []);
+        setLoading(false);
+      }, []);
+      useEffect(() => { loadAll(); }, [loadAll]);
+
+      const filtered = useMemo(() => {
+        const s = search.toLowerCase();
+        return products.filter(p => (cat === "Semua" || p.category === cat) && (p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s) || (p.brand || "").toLowerCase().includes(s)));
+      }, [products, search, cat]);
+
+      const addFinal = (p, v = null) => {
+        if ((p.stock || 0) <= 0) return notify("Stok habis!");
+        const ckey = v ? `${p.id}_${v.name}` : String(p.id);
+        const price = v ? v.price : p.price;
+        const name = p.name;
+        const vName = v ? v.name : null;
+        const itemStock = p.stock || 0;
+        setCart(prev => {
+          const ex = prev.find(x => x.ckey === ckey);
+          const currQty = ex ? ex.qty : 0;
+          if (currQty + 1 > itemStock) { notify(`Stok ${name} sisa ${itemStock}`); return prev; }
+          return ex ? prev.map(x => x.ckey === ckey ? { ...x, qty: x.qty + 1 } : x) : [...prev, { id: p.id, sku: p.sku, name, vName, price, qty: 1, ckey, stock: itemStock }];
+        });
+        setVariantPicker(null);
+      };
+      const clickProd = p => { if ((p.stock || 0) <= 0) return notify("Habis"); if (p.variants?.length > 0) setVariantPicker(p); else addFinal(p); };
+      const updQty = (ckey, d) => {
+        setCart(prev => prev.map(x => {
+          if (x.ckey === ckey) { const n = x.qty + d; return { ...x, qty: n > x.stock ? x.stock : n < 0 ? 0 : n }; }
+          return x;
+        }).filter(x => x.qty > 0));
+      };
+      const remItem = ckey => setCart(p => p.filter(x => x.ckey !== ckey));
+
+      const subtotal = cart.reduce((s, x) => s + x.price * x.qty, 0);
+      const { discountTotal, appliedPromos } = applyPromos(cart, promos);
+      const total = Math.max(0, subtotal - discountTotal);
+
+      const processTx = async () => {
+        if (cart.length === 0) return notify("Keranjang kosong!");
+        if (txType === "Cash" && parseFloat(cash) < total) return notify("Uang kurang!");
+        setModal("loading");
+
+        const cust = customers.find(c => c.id === customer);
+        const payload = {
+          session_id: user.session_id, cashier_id: user.cashier_id, cashier_name: user.name,
+          customer_id: cust?.id || null, customer_name: cust?.name || null,
+          subtotal, discount_total: discountTotal, total,
+          pay_method: txType, cash_received: txType === "Cash" ? parseFloat(cash) : total,
+          change_amount: txType === "Cash" ? parseFloat(cash) - total : 0,
+          applied_promos: appliedPromos
+        };
+
+        const { data: tx, error: err1 } = await db.from("transactions").insert(payload).select().single();
+        if (err1) { setModal(null); return notify("Gagal simpan: " + err1.message); }
+
+        const items = cart.map(x => ({ transaction_id: tx.id, product_id: x.id, sku: x.sku, name: x.name, variant_name: x.vName, price: x.price, qty: x.qty, subtotal: x.price * x.qty }));
+        await db.from("transaction_items").insert(items);
+
+        // Update stok
+        for (const item of cart) {
+          if (item.vName) {
+            await db.rpc("decrement_variant_stock", { p_id: item.id, v_name: item.vName, p_qty: item.qty });
+          } else {
+            await db.rpc("decrement_stock", { p_id: item.id, p_qty: item.qty });
+          }
+        }
+
+        setTxData({ ...tx, items });
+        setCart([]); setCash(""); setCustomer(""); setTxType("Cash");
+        loadAll();
+        setModal("receipt");
+      };
+
+      const closeSession = async () => {
+        setModal("loading");
+        const { data: txs } = await db.from("transactions").select("*").eq("session_id", user.session_id);
+        const rev = txs.reduce((s, t) => s + t.total, 0);
+        const cashIn = txs.filter(t => t.pay_method === "Cash").reduce((s, t) => s + t.total, 0);
+        const nonCash = rev - cashIn;
+        const { data: sess } = await db.from("cash_sessions").select("opening_amount").eq("id", user.session_id).single();
+        const expCash = (sess?.opening_amount || 0) + cashIn;
+        setModal({ type: "closeSess", rev, cashIn, nonCash, expCash });
+      };
+      const confirmClose = async (actCash, notes) => {
+        setModal("loading");
+        const diff = actCash - modal.expCash;
+        const summary = { total_transactions: modal.txCount || 0, total_revenue: modal.rev, total_cash: modal.cashIn, total_non_cash: modal.nonCash, expected_cash: modal.expCash, closing_amount: actCash, difference: diff };
+        await db.from("cash_sessions").update({ status: "closed", closed_at: new Date(), closing_amount: actCash, summary, notes_close: notes }).eq("id", user.session_id);
+        notify("Sesi ditutup!"); onLogout();
+      };
+
+      const color = settings?.receipt_color || "#114232";
+
+      const handleCustomerSaved = (newCustomer) => {
+        setCustomers(prev => [...prev, newCustomer].sort((a, b) => a.name.localeCompare(b.name)));
+        setCustomer(newCustomer.id);
+        setShowAddCustomer(false);
+      };
+
+      return (
+        <div className="h-screen flex bg-gray-100 overflow-hidden text-sm">
+          {/* KIRI - Produk */}
+          <div className="flex-[3] flex flex-col bg-white">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white z-10 shadow-sm relative">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>P</div>
+                <div>
+                  <div className="font-extrabold text-gray-800 text-lg leading-tight tracking-tight">Kasir POS</div>
+                  <div className="text-[11px] text-gray-500 font-medium">Sesi: <span className="font-bold text-gray-700">{user.name}</span></div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ketik nama / SKU..." className="pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 w-64 transition-all" style={{ '--tw-ring-color': color }} />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex px-4 py-3 gap-2 overflow-x-auto no-scrollbar border-b border-gray-50 shrink-0 shadow-sm z-10 bg-white">
+              {CATS.map(c => <button key={c} onClick={() => setCat(c)} className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${cat === c ? 'text-white shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`} style={cat === c ? { background: color, borderColor: color } : {}}>{c}</button>)}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 bg-grayLight">
+              {loading ? <Spinner /> : filtered.length === 0 ? <div className="text-center text-gray-400 py-10">Produk tidak ditemukan</div> :
+                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                  {filtered.map(p => <div key={p.id} onClick={() => clickProd(p)} className="bg-white rounded-2xl p-2 border border-gray-200 cursor-pointer hover:border-brand hover:shadow-md transition-all group flex flex-col relative overflow-hidden">
+                    <div className="aspect-square rounded-xl overflow-hidden mb-2 bg-gray-50 relative">
+                      <img src={p.image_url || `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" onError={e => e.target.src = `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} />
+                      {(p.stock || 0) <= 0 && <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-[10px] tracking-widest backdrop-blur-[1px]">HABIS</div>}
+                      {p.variants?.length > 0 && <div className="absolute top-1 right-1 bg-blue-500/90 text-white rounded-md px-1.5 py-0.5 text-[8px] font-bold shadow-sm">VAR</div>}
+                    </div>
+                    <div className="text-[9px] text-gray-400 font-mono mb-0.5 uppercase tracking-wider truncate">{p.sku}</div>
+                    <div className="font-bold text-gray-800 text-xs leading-tight mb-1 line-clamp-2 group-hover:text-brand transition-colors">{p.name}</div>
+                    <div className="mt-auto flex justify-between items-end">
+                      <div className="font-extrabold text-[13px]" style={{ color }}>{fmt(p.price)}</div>
+                      <div className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.stock <= 5 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{p.stock}</div>
+                    </div>
+                  </div>)}
+                </div>}
+            </div>
+          </div>
+
+          {/* KANAN - Keranjang */}
+          <div className="flex-[1.5] lg:flex-1 bg-white border-l border-gray-200 flex flex-col shadow-[-4px_0_20px_rgba(0,0,0,0.03)] z-20">
+            <div className="p-4 border-b border-gray-100 bg-gray-50">
+              <div className="flex justify-between items-center mb-3">
+                <h2 className="font-extrabold text-gray-800 uppercase tracking-wider text-sm flex items-center gap-2"><span className="text-xl">🛒</span> Keranjang</h2>
+                <button onClick={() => setCart([])} disabled={cart.length === 0} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:hover:bg-transparent">Kosongkan</button>
+              </div>
+              <div className="flex gap-2">
+                <select value={customer} onChange={e => setCustomer(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30 shadow-sm text-gray-700">
+                  <option value="">-- Umum (Tanpa Nama) --</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <button onClick={() => setShowAddCustomer(true)} className="px-3 py-2 bg-brandLight text-brand hover:bg-brand/20 border border-brand/20 rounded-xl font-bold text-xs transition-colors shadow-sm flex items-center gap-1 shrink-0">
+                  <span>+</span> Baru
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-grayLight">
+              {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60"><span className="text-6xl mb-4">🛍️</span><p className="font-medium">Belum ada pesanan</p></div> :
+                cart.map(x => <div key={x.ckey} className="bg-white rounded-xl p-3 border border-gray-100 shadow-sm relative overflow-hidden group">
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="pr-6">
+                      <div className="font-bold text-gray-800 text-[13px] leading-tight">{x.name}{x.vName && <span className="text-brand"> ({x.vName})</span>}</div>
+                      <div className="text-[11px] font-extrabold mt-0.5" style={{ color }}>{fmt(x.price)}</div>
+                    </div>
+                    <button onClick={() => remItem(x.ckey)} className="absolute top-2 right-2 w-6 h-6 rounded-lg bg-red-50 text-red-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity font-bold hover:bg-red-100 text-[10px]">✕</button>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
+                      <button onClick={() => updQty(x.ckey, -1)} className="w-6 h-6 flex items-center justify-center rounded bg-white shadow-sm font-bold text-gray-600 hover:text-brand transition-colors">−</button>
+                      <input value={x.qty} readOnly className="w-8 text-center text-xs font-bold bg-transparent outline-none" />
+                      <button onClick={() => updQty(x.ckey, 1)} className="w-6 h-6 flex items-center justify-center rounded text-white shadow-sm font-bold transition-transform active:scale-95" style={{ background: color }}>+</button>
+                    </div>
+                    <div className="font-black text-[13px] text-gray-800">{fmt(x.price * x.qty)}</div>
+                  </div>
+                </div>)}
+            </div>
+
+            <div className="p-4 bg-white border-t border-gray-100 shadow-[0_-10px_20px_rgba(0,0,0,0.02)] z-10 relative">
+              {appliedPromos.length > 0 && <div className="bg-green-50 rounded-xl p-2 mb-3 border border-green-100/50">
+                {appliedPromos.map((p, i) => <div key={i} className="flex justify-between text-[10px] font-bold text-green-700"><span>🏷️ {p.name}</span><span>-{fmt(p.discount)}</span></div>)}
+              </div>}
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs font-semibold text-gray-500">Subtotal</span><span className="font-bold text-gray-800 text-sm">{fmt(subtotal)}</span>
+              </div>
+              {discountTotal > 0 && <div className="flex justify-between items-center mb-1 text-red-500">
+                <span className="text-xs font-bold">Diskon Promo</span><span className="font-bold text-sm">-{fmt(discountTotal)}</span>
+              </div>}
+              <div className="flex justify-between items-end mt-2 pt-2 border-t border-dashed border-gray-200 mb-4">
+                <span className="text-sm font-extrabold uppercase tracking-wider text-gray-800">Total</span><span className="text-3xl font-black leading-none" style={{ color }}>{fmt(total)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {PAY_METHODS.map(m => <button key={m} onClick={() => setTxType(m)} className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${txType === m ? 'border-dark bg-dark text-white' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200 hover:bg-gray-50'}`}>{m}</button>)}
+              </div>
+              {txType === "Cash" && <div className="mb-4">
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[50000, 100000, total].map(n => <button key={n} onClick={() => setCash(n)} className="px-2.5 py-1.5 bg-brandLight text-brand rounded-lg text-xs font-bold border border-brand/20 hover:bg-brand hover:text-white transition-colors">{fmt(n)}</button>)}
+                </div>
+                <input value={cash} onChange={e => setCash(e.target.value)} type="number" placeholder="Nominal Uang Tunai" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 text-brand text-right shadow-inner" style={{ '--tw-ring-color': color }} />
+                {parseFloat(cash) >= total && <div className="mt-2 flex justify-between bg-orange-50 text-orange-600 p-2.5 rounded-xl border border-orange-100 text-xs font-bold"><span>Kembalian:</span><span className="text-sm font-black">{fmt(parseFloat(cash) - total)}</span></div>}
+              </div>}
+              <div className="flex gap-2">
+                <button onClick={closeSession} className="w-12 py-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl font-bold flex items-center justify-center border border-red-100 transition-colors" title="Tutup Sesi">⏏️</button>
+                <button onClick={processTx} disabled={cart.length === 0} className="flex-1 py-4 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">✓ Proses Bayar</button>
+              </div>
+            </div>
+          </div>
+
+          {/* MODALS */}
+          {showAddCustomer && <AddCustomerModal onClose={() => setShowAddCustomer(false)} onSave={handleCustomerSaved} notify={notify} />}
+
+          {variantPicker && <Modal onClose={() => setVariantPicker(null)} title="Pilih Varian Produk">
+            <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
+              <img src={variantPicker.image_url || `https://placehold.co/80/1a6b3c/white?text=${variantPicker.name.slice(0, 2)}`} className="w-12 h-12 rounded-lg object-cover" onError={e => e.target.src = `https://placehold.co/80/1a6b3c/white?text=?`} />
+              <div><div className="font-bold text-gray-800 leading-tight">{variantPicker.name}</div><div className="text-xs text-gray-500 font-medium">Stok: {variantPicker.stock}</div></div>
+            </div>
+            <div className="grid grid-cols-1 gap-2">
+              {(!variantPicker.variants || variantPicker.variants.length === 0) && (
+                <button onClick={() => addFinal(variantPicker)} className="text-left p-3 rounded-xl border-2 border-gray-100 hover:border-brand hover:bg-brandLight transition-all flex justify-between items-center group">
+                  <div><div className="font-bold text-gray-800 group-hover:text-brand">Tanpa Varian</div><div className="text-[10px] text-gray-500">Standar</div></div>
+                  <span className="font-black" style={{ color }}>{fmt(variantPicker.price)}</span>
+                </button>
+              )}
+              {(variantPicker.variants || []).map((v, i) => <button key={i} onClick={() => addFinal(variantPicker, v)} className="text-left p-3 rounded-xl border-2 border-gray-100 hover:border-brand hover:bg-brandLight transition-all flex justify-between items-center group">
+                <div><div className="font-bold text-gray-800 group-hover:text-brand">{v.name}</div>
+                <div className="flex gap-2 items-center mt-0.5">
+                  {v.sku && <div className="text-[10px] text-gray-400 font-mono">SKU: {v.sku}</div>}
+                  <div className="text-[10px] text-gray-500 font-medium">Stok: {v.stock}</div>
+                </div></div>
+                <span className="font-black" style={{ color }}>{fmt(v.price)}</span>
+              </button>)}
+            </div>
+          </Modal>}
+
+          {modal === "receipt" && txData && <Modal onClose={() => setModal(null)} title="Transaksi Berhasil!">
+            <div className="bg-green-50 text-green-700 p-4 rounded-xl mb-4 text-center border border-green-200">
+              <div className="text-4xl mb-2">🎉</div>
+              <div className="font-black text-lg">Pembayaran Sukses</div>
+              <div className="text-xs font-semibold mt-1 font-mono uppercase bg-green-100 inline-block px-2 py-0.5 rounded text-green-800">#{txData.tx_code}</div>
+            </div>
+            <div id="print-area" className="bg-white p-4 text-[10px] font-mono leading-relaxed border border-gray-200 shadow-sm mx-auto w-full max-w-[58mm]">
+              {settings?.store_logo && <div className="text-center mb-1"><img src={settings.store_logo} className="h-6 mx-auto grayscale" onError={e => e.target.style.display = "none"} /></div>}
+              <div className="text-center font-bold text-xs mb-1 uppercase">{settings?.store_name || "Toko Azzahro"}</div>
+              <div className="text-center mb-2 leading-tight px-2">{settings?.store_address || "Alamat Toko"}</div>
+              <div className="border-t border-dashed border-gray-400 py-1 space-y-0.5 flex flex-col items-center">
+                <div className="w-full flex justify-between"><span>Tgl:</span><span>{new Date().toLocaleDateString("id-ID")}</span></div>
+                <div className="w-full flex justify-between"><span>No:</span><span>{txData.tx_code}</span></div>
+                <div className="w-full flex justify-between"><span>Kasir:</span><span>{txData.cashier_name}</span></div>
+                {txData.customer_name && <div className="w-full flex justify-between"><span>Plg:</span><span className="truncate max-w-[80px] text-right">{txData.customer_name}</span></div>}
+              </div>
+              <div className="border-t border-dashed border-gray-400 py-1 space-y-1">
+                {txData.items.map(i => <div key={i.id}><div className="truncate">{i.name}{i.variant_name ? ` (${i.variant_name})` : ""}</div><div className="flex justify-between pl-2"><span>{i.qty} x {i.price}</span><span>{i.subtotal}</span></div></div>)}
+              </div>
+              <div className="border-t border-dashed border-gray-400 py-1">
+                <div className="flex justify-between font-bold"><span>TOTAL</span><span>{txData.total}</span></div>
+                {txData.pay_method === "Cash" && <><div className="flex justify-between"><span>TUNAI</span><span>{txData.cash_received}</span></div><div className="flex justify-between"><span>KEMBALI</span><span>{txData.change_amount}</span></div></>}
+                {txData.pay_method !== "Cash" && <div className="flex justify-between"><span>METODE</span><span>{txData.pay_method}</span></div>}
+              </div>
+              <div className="text-center mt-3 pt-2 border-t border-gray-400">{settings?.store_footer || "Terima Kasih"}</div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => window.print()} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm transition-colors border border-gray-200">🖨️ Cetak Struk</button>
+              <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-colors">Selesai</button>
+            </div>
+          </Modal>}
+
+          {modal?.type === "closeSess" && <Modal onClose={() => setModal(null)} title="Tutup Sesi Kasir">
+            <div className="bg-brandLight rounded-2xl p-4 mb-4 border border-brand/20">
+              <div className="text-xs font-bold text-brand uppercase tracking-wider mb-2">Ringkasan Sesi</div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-sm"><span className="text-gray-600 font-medium">Total Omzet</span><span className="font-bold text-gray-800">{fmt(modal.rev)}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-600 font-medium">Non-Cash (QRIS/Trf)</span><span className="font-bold text-gray-800">{fmt(modal.nonCash)}</span></div>
+                <div className="flex justify-between text-sm border-t border-gray-200 pt-1.5 mt-1.5"><span className="text-gray-800 font-bold">Ekspektasi di Laci</span><span className="font-black" style={{ color }}>{fmt(modal.expCash)}</span></div>
+              </div>
+            </div>
+            <form onSubmit={e => { e.preventDefault(); confirmClose(e.target.act.value, e.target.notes.value); }} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Uang Aktual di Laci *</label>
+                <input name="act" type="number" required placeholder="Hitung uang fisik..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Catatan (Opsional)</label>
+                <input name="notes" placeholder="Penjelasan jika ada selisih..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <button type="submit" className="w-full py-4 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-sm shadow-md transition-all">Akhiri & Tutup Laci</button>
+            </form>
+          </Modal>}
+
+          {modal === "loading" && <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[300] flex items-center justify-center"><Spinner /></div>}
+        </div>
+      );
+    }
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [cashiers, setCashiers] = useState([]);
+      const [settings, setSettings] = useState(null);
+      const [toast, setToast] = useState("");
+
+      useEffect(() => {
+        db.from("cashiers").select("*").eq("active", true).then(({ data }) => setCashiers(data || []));
+        db.from("settings").select("*").then(({ data }) => { if (data) { const obj = {}; data.forEach(r => { obj[r.key] = r.value; }); setSettings(obj); } });
+      }, []);
+
+      const notify = msg => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+
+      if (!user) return <><PinPad onSuccess={setUser} cashiers={cashiers} settings={settings} /><Toast msg={toast} /></>;
+      if (user.needs_open) return <><OpenSession cashiers={cashiers} onOpened={s => setUser({ ...user, needs_open: false, session_id: s.id })} notify={notify} /><Toast msg={toast} /></>;
+      return <><POS user={user} settings={settings} notify={notify} onLogout={() => setUser(null)} /><Toast msg={toast} /></>;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+
+</html>

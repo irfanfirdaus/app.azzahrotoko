@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Admin — Toko Azzahro</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: { brand: '#114232', brandLight: '#EDF2F0', gold: '#D4AF37', goldLight: '#FDF8E7', dark: '#0A2517', grayLight: '#F8F9FB' },
+          animation: { 'fade-up': 'fadeUp 0.3s ease-out', shake: 'shake 0.4s ease-in-out' },
+          keyframes: {
+            fadeUp: { '0%': { opacity: '0', transform: 'translateY(10px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+            shake: { '0%, 100%': { transform: 'translateX(0)' }, '25%': { transform: 'translateX(-6px)' }, '75%': { transform: 'translateX(6px)' } }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="bg-grayLight text-gray-800 font-sans antialiased">
+  <div id="root"></div>
+  <script type="text/babel">
+    const SUPABASE_URL = "https://xliwxtakluemverkgwrv.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXd4dGFrbHVlbXZlcmtnd3J2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1MjEzNTQsImV4cCI6MjA5MjA5NzM1NH0.XaP6ad5rvhA8EMlCSGy6FIoNltBMiDwQ4fLxe9BwVy8";
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const CATS = ["Semua", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
+    const PAY_METHODS = ["Cash", "Transfer Bank", "QRIS"];
+    const fmt = n => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
+    const fmtDate = d => new Date(d).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    const uid = () => Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const txCode = c => `#${c}`;
+    const genSKU = (cat, existing) => {
+      const p = { "Air Zamzam": "ZAM", "Kurma": "KUR", "Tasbih": "TAS", "Sajadah": "SAJ", "Parfum": "PAR", "Peci & Mukena": "PEC", "Lainnya": "LAN" }[cat] || "PRD";
+      const nums = existing.filter(x => x.sku && x.sku.startsWith(p)).map(x => parseInt(x.sku.split("-")[1] || "0")).filter(n => !isNaN(n));
+      return `${p}-${String(nums.length > 0 ? Math.max(...nums) + 1 : 1).padStart(3, "0")}`;
+    };
+
+    function Toast({ msg }) { if (!msg) return null; return <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-dark text-white px-5 py-2.5 rounded-full z-[9999] text-sm font-medium shadow-xl whitespace-nowrap animate-fade-up">{msg}</div>; }
+    function Modal({ children, onClose, title }) {
+      return (
+        <div className="fixed inset-0 bg-black/50 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 transition-opacity" onClick={onClose}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full max-w-md max-h-[90vh] overflow-y-auto animate-fade-up shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="font-bold text-lg text-gray-900">{title}</h3>
+              <button onClick={onClose} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors text-gray-500">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+              </button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+    function Spinner() { return <div className="flex items-center justify-center p-10"><div className="w-8 h-8 border-4 border-gray-200 border-t-brand rounded-full animate-spin"></div></div>; }
+
+    // ── PIN PAD ──────────────────────────────────────────────────
+    function PinPad({ onSuccess }) {
+      const [pin, setPin] = useState("");
+      const [shake, setShake] = useState(false);
+      const [settings, setSettings] = useState(null);
+
+      useEffect(() => { db.from("settings").select("*").then(({ data }) => { if (data) { const obj = {}; data.forEach(r => { obj[r.key] = r.value; }); setSettings(obj); } }); }, []);
+
+      const press = d => {
+        if (pin.length >= 6) return;
+        const next = pin + d; setPin(next);
+        if (next.length >= 4 && settings) {
+          const adminPin = settings.admin_pin || "0000";
+          const ownerPin = settings.owner_pin || "9999";
+          if (next === ownerPin) { onSuccess("owner"); return; }
+          if (next === adminPin) { onSuccess("admin"); return; }
+          if (next.length >= 6) { setShake(true); setTimeout(() => { setPin(""); setShake(false); }, 600); }
+        }
+      };
+      const del = () => setPin(p => p.slice(0, -1));
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-dark to-brand flex flex-col items-center justify-center p-6">
+          <div className="text-5xl mb-3">⚙️</div>
+          <div className="text-white font-extrabold text-2xl mb-1">Admin Panel</div>
+          <div className="text-white/60 text-sm mb-8 font-medium">Toko Azzahro — Haji & Umroh</div>
+          <div className={`bg-white rounded-3xl p-7 w-full max-w-[320px] shadow-2xl ${shake ? 'animate-shake' : ''}`}>
+            <div className="flex justify-center gap-3 mb-6">
+              {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className={`w-3.5 h-3.5 rounded-full transition-colors ${i < pin.length ? 'bg-dark' : 'bg-gray-200'}`} />)}
+            </div>
+            <div className="grid grid-cols-3 gap-2.5">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, "", 0, "⌫"].map((d, i) => (
+                <button key={i} onClick={() => d === "" ? null : d === "⌫" ? del() : press(String(d))} disabled={d === ""}
+                  className={`py-4 text-xl font-bold rounded-2xl ${d === "" ? 'invisible' : d === "⌫" ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-gray-50 text-dark hover:bg-gray-100 active:bg-gray-200'} transition-colors`}>
+                  {d}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 text-center text-xs text-gray-400 font-medium">Admin PIN atau Owner PIN</div>
+          </div>
+          <a href="/" className="mt-8 text-white/50 text-sm font-medium hover:text-white transition-colors">← Kembali ke Katalog</a>
+        </div>
+      );
+    }
+
+    // ── MAIN APP ─────────────────────────────────────────────────
+    function App() {
+      const [role, setRole] = useState(null);
+      const [page, setPage] = useState("dashboard");
+      const [products, setProducts] = useState([]);
+      const [customers, setCustomers] = useState([]);
+      const [transactions, setTransactions] = useState([]);
+      const [promos, setPromos] = useState([]);
+      const [cashiers, setCashiers] = useState([]);
+      const [sessions, setSessions] = useState([]);
+      const [settings, setSettings] = useState({ store_name: "Toko Azzahro", store_tagline: "Pilihan Berkah dari Tanah Suci", store_address: "", store_phone: "", store_footer: "Terima kasih, semoga berkah 🤲", store_logo: "", receipt_color: "#1a6b3c", wa_number: "6281234567890", kasir_pin: "1234", admin_pin: "0000", owner_pin: "9999" });
+      const [toast, setToast] = useState("");
+      const [loading, setLoading] = useState({});
+
+      const notify = msg => { setToast(msg); setTimeout(() => setToast(""), 2800); };
+      const color = settings.receipt_color || "#114232";
+      const setLoad = (k, v) => setLoading(l => ({ ...l, [k]: v }));
+
+      const loadProducts = useCallback(async () => { setLoad("p", true); const { data } = await db.from("products").select("*").order("created_at", { ascending: false }); setProducts(data || []); setLoad("p", false); }, []);
+      const loadCustomers = useCallback(async () => { setLoad("c", true); const { data } = await db.from("customers").select("*").order("name"); setCustomers(data || []); setLoad("c", false); }, []);
+      const loadTransactions = useCallback(async () => { setLoad("t", true); const { data } = await db.from("transactions").select("*,transaction_items(*)").order("created_at", { ascending: false }).limit(500); setTransactions(data || []); setLoad("t", false); }, []);
+      const loadPromos = useCallback(async () => { const { data } = await db.from("promos").select("*").order("created_at", { ascending: false }); setPromos(data || []); }, []);
+      const loadCashiers = useCallback(async () => { const { data } = await db.from("cashiers").select("*").order("code"); setCashiers(data || []); }, []);
+      const loadSessions = useCallback(async () => { const { data } = await db.from("cash_sessions").select("*").order("opened_at", { ascending: false }).limit(50); setSessions(data || []); }, []);
+      const loadSettings = useCallback(async () => { const { data } = await db.from("settings").select("*"); if (data?.length) { const obj = {}; data.forEach(r => { obj[r.key] = r.value; }); setSettings(s => ({ ...s, ...obj })); } }, []);
+
+      useEffect(() => {
+        if (!role) return;
+        const p = page;
+        if (p === "dashboard") { loadProducts(); loadCustomers(); loadTransactions(); loadCashiers(); loadSessions(); loadSettings(); }
+        if (p === "produk") loadProducts();
+        if (p === "pelanggan") { loadCustomers(); loadTransactions(); }
+        if (p === "promo") { loadPromos(); loadProducts(); }
+        if (p === "laporan") { loadTransactions(); loadProducts(); loadCustomers(); }
+        if (p === "sesi") loadSessions();
+        if (p === "pengaturan") { loadCashiers(); loadSettings(); }
+      }, [page, role]);
+
+      if (!role) return <PinPad onSuccess={setRole} />;
+
+      const allPages = [
+        { id: "dashboard", icon: "🏠", label: "Home" },
+        { id: "produk", icon: "📦", label: "Produk" },
+        { id: "pelanggan", icon: "👥", label: "Pelanggan" },
+        { id: "promo", icon: "🏷️", label: "Promo" },
+        { id: "laporan", icon: "📊", label: "Laporan" },
+        { id: "sesi", icon: "🔄", label: "Sesi" },
+        { id: "pengaturan", icon: "⚙️", label: "Setting" },
+      ];
+
+      return (
+        <div className="min-h-screen bg-grayLight max-w-md mx-auto relative shadow-sm flex flex-col">
+          <Toast msg={toast} />
+          <div className="bg-dark text-white p-4 flex items-center justify-between sticky top-0 z-50 rounded-b-2xl shadow-md">
+            <div>
+              <div className="font-extrabold text-lg tracking-tight flex items-center gap-2">⚙️ {allPages.find(p => p.id === page)?.label || "Admin"}</div>
+              <div className="text-xs text-white/70 font-medium mt-0.5">{role === "owner" ? "Owner" : "Admin"} · {settings.store_name}</div>
+            </div>
+            <div className="flex gap-2">
+              <a href="kasir.html" className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl text-white font-semibold text-xs transition-colors flex items-center">Kasir →</a>
+              <button onClick={() => setRole(null)} className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-1.5 rounded-xl font-semibold text-xs transition-colors">Keluar</button>
+            </div>
+          </div>
+
+          <div className="pb-24 flex-1">
+            {page === "dashboard" && <Dashboard products={products} transactions={transactions} customers={customers} cashiers={cashiers} sessions={sessions} settings={settings} color={color} notify={notify} onRefresh={() => { loadProducts(); loadCustomers(); loadTransactions(); loadCashiers(); loadSessions(); }} />}
+            {page === "produk" && <Produk products={products} notify={notify} onReload={loadProducts} loading={loading.p} color={color} />}
+            {page === "pelanggan" && <Pelanggan customers={customers} transactions={transactions} notify={notify} onReload={() => { loadCustomers(); loadTransactions(); }} loading={loading.c} color={color} />}
+            {page === "promo" && <PromoPage promos={promos} products={products} notify={notify} onReload={loadPromos} color={color} />}
+            {page === "laporan" && <Laporan transactions={transactions} products={products} customers={customers} notify={notify} loading={loading.t} color={color} />}
+            {page === "sesi" && <SesiPage sessions={sessions} onReload={loadSessions} notify={notify} color={color} />}
+            {page === "pengaturan" && <Pengaturan cashiers={cashiers} settings={settings} notify={notify} role={role} onReload={() => { loadCashiers(); loadSettings(); }} color={color} />}
+          </div>
+
+          <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-gray-100 flex justify-around p-2 pb-5 z-40 rounded-t-2xl shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+            {allPages.filter(p => role === "admin" ? !["laporan"].includes(p.id) : true).map(t => (
+              <button key={t.id} onClick={() => setPage(t.id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all flex-1 ${page === t.id ? 'scale-105' : 'opacity-60 hover:opacity-100'}`}>
+                <span className="text-xl">{t.icon}</span>
+                <span className={`text-[9px] uppercase tracking-wider ${page === t.id ? 'text-dark font-extrabold' : 'text-gray-500 font-semibold'}`}>{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ── DASHBOARD ────────────────────────────────────────────────
+    function Dashboard({ products, transactions, customers, cashiers, sessions, settings, color, notify, onRefresh }) {
+      const today = new Date().toDateString();
+      const todayTx = transactions.filter(t => new Date(t.created_at).toDateString() === today);
+      const todayRev = todayTx.reduce((s, t) => s + t.total, 0);
+      const lowStock = products.filter(p => p.stock <= 5);
+      const openSessions = sessions.filter(s => s.status === "open");
+
+      return (
+        <div className="p-4 flex flex-col gap-4">
+          <div className="bg-gradient-to-br from-dark to-brand rounded-2xl p-5 text-white shadow-md">
+            {settings.store_logo && <img src={settings.store_logo} alt="logo" className="h-10 bg-white/10 p-1 rounded-lg object-contain mb-3" onError={e => e.target.style.display = "none"} />}
+            <div className="text-xs text-white/60 font-semibold tracking-wider uppercase mb-0.5">Admin Panel</div>
+            <div className="text-xl font-extrabold leading-tight">{settings.store_name}</div>
+            <div className="text-xs text-white/70 font-medium mt-1">{new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
+            <div className="mt-5 bg-white/10 rounded-xl p-4 backdrop-blur-sm border border-white/10">
+              <div className="text-xs text-white/70 font-semibold uppercase tracking-wider mb-1">Omzet Hari Ini</div>
+              <div className="text-3xl font-black">{fmt(todayRev)}</div>
+              <div className="text-xs text-white/70 font-medium mt-1">{todayTx.length} transaksi hari ini</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {[{ label: "Total Produk", val: products.length, icon: "📦", c: "text-blue-500", bg: "bg-blue-50" }, { label: "Pelanggan", val: customers.length, icon: "👥", c: "text-purple-500", bg: "bg-purple-50" }, { label: "Stok Menipis", val: lowStock.length, icon: "⚠️", c: "text-orange-500", bg: "bg-orange-50" }, { label: "Sesi Aktif", val: openSessions.length, icon: "🔄", c: openSessions.length > 0 ? "text-brand" : "text-gray-400", bg: openSessions.length > 0 ? "bg-green-50" : "bg-gray-50" }].map(s => (
+              <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
+                <div className={`text-xl mb-3 w-10 h-10 flex items-center justify-center rounded-full ${s.bg}`}>{s.icon}</div>
+                <div>
+                  <div className={`text-2xl font-black ${s.c}`}>{s.val}</div>
+                  <div className="text-xs text-gray-500 font-medium mt-0.5">{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button onClick={onRefresh} className="w-full bg-white border border-gray-200 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition-colors shadow-sm text-sm flex justify-center items-center gap-2">
+            🔄 Refresh Data
+          </button>
+
+          {openSessions.length > 0 && <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <div className="font-bold text-sm mb-3 flex items-center gap-2 text-brand">🔄 Sesi Kasir Aktif</div>
+            <div className="flex flex-col gap-1">
+              {openSessions.map(s => <div key={s.id} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
+                <div>
+                  <div className="font-bold text-sm text-gray-800">{s.cashier_name}</div>
+                  <div className="text-xs text-gray-500">PIC: {s.opened_by || "-"} · {fmtDate(s.opened_at)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs font-bold text-brand bg-brandLight px-2 py-1 rounded-lg">Modal: {fmt(s.opening_amount || 0)}</div>
+                </div>
+              </div>)}
+            </div>
+          </div>}
+
+          {lowStock.length > 0 && <div className="bg-white rounded-2xl p-4 shadow-sm border border-orange-100">
+            <div className="font-bold text-sm mb-3 flex items-center gap-2 text-orange-600">⚠️ Stok Menipis</div>
+            <div className="flex flex-col gap-1">
+              {lowStock.map(p => <div key={p.id} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm font-medium text-gray-700">
+                <span className="truncate pr-4">{p.name}</span>
+                <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0">{p.stock} tersisa</span>
+              </div>)}
+            </div>
+          </div>}
+
+          {transactions.length > 0 && <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <div className="font-bold text-sm mb-3 flex items-center gap-2">🕒 Transaksi Terakhir</div>
+            <div className="flex flex-col gap-1">
+              {transactions.slice(0, 5).map(t => <div key={t.id} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
+                <div>
+                  <div className="font-bold text-sm text-gray-800">{t.customer_name || "Umum"}</div>
+                  <div className="text-[11px] text-gray-500 mt-0.5">{fmtDate(t.created_at)} · <span className="font-mono font-semibold" style={{ color }}>{txCode(t.tx_code)}</span>{t.cashier_name ? ` · ${t.cashier_name}` : ""}</div>
+                </div>
+                <div className="font-black text-sm" style={{ color }}>{fmt(t.total)}</div>
+              </div>)}
+            </div>
+          </div>}
+        </div>
+      );
+    }
+
+    // ── PRODUK ────────────────────────────────────────────────────
+    function Produk({ products, notify, onReload, loading, color }) {
+      const [modal, setModal] = useState(null);
+      const [form, setForm] = useState({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", stock: "", category: "Kurma", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" });
+      const [search, setSearch] = useState("");
+      const [saving, setSaving] = useState(false);
+      const [showMenu, setShowMenu] = useState(false);
+      const fileRef = useRef();
+
+      const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.sku?.toLowerCase().includes(search.toLowerCase()) || p.brand?.toLowerCase().includes(search.toLowerCase()));
+      const autoSKU = () => setForm(f => ({ ...f, sku: genSKU(f.category, products) }));
+      
+      const updateMatrix = (newTypes) => {
+        setForm(f => {
+          let combs = [[]];
+          newTypes.forEach(t => { 
+            const opts = (t.options_string || "").split(",").map(s => s.trim()).filter(Boolean);
+            if(opts.length > 0) { const temp = []; combs.forEach(c => { opts.forEach(o => temp.push([...c, o])); }); combs = temp; } 
+          });
+          if (combs[0].length === 0) combs = [];
+          const newVariants = combs.map(c => {
+            const name = c.join(" ");
+            const existing = f.variants.find(v => v.name === name);
+            return existing || { sku: f.sku ? `${f.sku}-${c.map(x=>x.slice(0,3).toUpperCase()).join("-")}` : "", name, cost_price: 0, price: 0, stock: 0, weight: "", weight_unit: f.weight_unit || "g" };
+          });
+          return { ...f, variant_types: newTypes, variants: newVariants };
+        });
+      };
+      
+      const addVarType = () => { if(form.variant_types.length >= 2) return notify("Maksimal 2 tipe varian!"); updateMatrix([...form.variant_types, { name: "", options_string: "" }]); };
+      const updateVarType = (idx, field, val) => { const nt = [...form.variant_types]; nt[idx][field] = val; updateMatrix(nt); };
+      const remVarType = idx => { const nt = form.variant_types.filter((_, i) => i !== idx); updateMatrix(nt); };
+      const updateVarItem = (idx, field, val) => { setForm(f => { const nv = [...f.variants]; nv[idx][field] = val; return { ...f, variants: nv }; }); };
+
+      const save = async () => {
+        if (!form.name || (!form.has_variants && !form.price)) return notify("Nama & harga utama wajib!");
+        if (form.has_variants && form.variants.length === 0) return notify("Varian belum ditambahkan!");
+        if (!form.sku) return notify("SKU wajib!");
+        setSaving(true);
+        const payload = { sku: form.sku, name: form.name, brand: form.brand, description: form.description, cost_price: form.has_variants ? 0 : parseInt(form.cost_price)||0, price: form.has_variants ? 0 : parseInt(form.price), stock: form.has_variants ? 0 : parseInt(form.stock) || 0, category: form.category, weight: form.weight, weight_unit: form.weight_unit, variant_types: form.has_variants ? form.variant_types.map(vt => ({ name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean) })) : [], variants: form.has_variants ? form.variants : [], image_url: form.image_url || `https://placehold.co/400x400/1a6b3c/white?text=${encodeURIComponent(form.name.slice(0, 4))}`, active: true };
+        let error;
+        if (modal === "add") { ({ error } = await db.from("products").insert(payload)); if (!error) notify("Produk ditambahkan!"); }
+        else { ({ error } = await db.from("products").update(payload).eq("id", modal)); if (!error) notify("Produk diupdate!"); }
+        setSaving(false);
+        if (error) return notify("Gagal: " + error.message);
+        setModal(null); onReload();
+      };
+      const del = async (id) => { const { error } = await db.from("products").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); onReload(); };
+      const openEdit = p => { setModal(p.id); setForm({ sku: p.sku || "", name: p.name, brand: p.brand || "", description: p.description || "", cost_price: p.cost_price || "", price: p.price, stock: p.stock, category: p.category, weight: p.weight || "", weight_unit: p.weight_unit || "g", has_variants: p.variants && p.variants.length > 0, variant_types: (p.variant_types || []).map(vt => ({ name: vt.name, options_string: (vt.options || []).join(", ") })), variants: p.variants || [], image_url: p.image_url || "" }); };
+
+      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, Merk: p.brand, Deskripsi: p.description, HargaBeli: p.cost_price, Harga: p.price, Stok: p.stock, Kategori: p.category, Berat: `${p.weight || ""}${p.weight_unit || ""}`, Foto: p.image_url, Varian: p.variants && p.variants.length > 0 ? p.variants.map(v => `${v.sku || p.sku + '-' + v.name}::${v.name}::${v.cost_price||0}::${v.price||0}::${v.stock||0}::${v.weight||""}${v.weight_unit||""}`).join(" | ") : "" }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
+      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR-001", Nama: "Contoh Produk", Merk: "Brand", Deskripsi: "Deskripsi", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", Berat: "500g", Foto: "https://...", Varian: "KUR-001-A::Hijau L::40000::50000::10::200g | KUR-001-B::Kuning M::45000::55000::5::250g" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
+      const importFile = e => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async ev => {
+          try {
+            const wb = XLSX.read(ev.target.result, { type: "binary" });
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            const imported = rows.map(r => {
+               let variants = [];
+               let variant_types = [];
+               if (r.Varian) { variants = String(r.Varian).split("|").map(v => { const parts = v.trim().split("::"); return { sku: parts[0], name: parts[1] || "", cost_price: parseInt(parts[2])||0, price: parseInt(parts[3]||parts[2]) || 0, stock: parseInt(parts[4])||0, weight: String(parts[5]||"").replace(/[^0-9.]/g, ""), weight_unit: String(parts[5]||"g").replace(/[0-9.]/g, "") || "g" }; }).filter(v => v.name); variant_types = [{name: "Varian (Import)", options_string: variants.map(v=>v.name).join(", ")}]; }
+               return { sku: String(r.SKU || genSKU(r.Kategori || "Lainnya", products)), name: r.Nama || "", brand: r.Merk || "", description: r.Deskripsi || "", cost_price: variants.length > 0 ? 0 : (parseInt(r.HargaBeli) || 0), price: variants.length > 0 ? 0 : (parseInt(r.Harga) || 0), stock: variants.length > 0 ? 0 : (parseInt(r.Stok) || 0), category: r.Kategori || "Lainnya", weight: String(r.Berat || "").replace(/[^0-9.]/g, ""), weight_unit: String(r.Berat || "g").replace(/[0-9.]/g, "") || "g", variant_types: variants.length > 0 ? variant_types.map(vt => ({name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean)})) : [], variants, image_url: r.Foto || `https://placehold.co/400x400/1a6b3c/white?text=${encodeURIComponent((r.Nama || "P").slice(0, 4))}`, active: true };
+            }).filter(r => r.name);
+            let added = 0, updated = 0;
+            for (const item of imported) { const ex = products.find(p => p.sku === item.sku); if (ex) { await db.from("products").update(item).eq("id", ex.id); updated++; } else { await db.from("products").insert(item); added++; } }
+            notify(`${added} ditambah, ${updated} diupdate`); onReload();
+          } catch (err) { notify("Gagal import: " + err.message); }
+          e.target.value = "";
+        };
+        reader.readAsBinaryString(file);
+      };
+
+      return (
+        <div className="p-4">
+          <div className="flex gap-2 mb-4">
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / SKU..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
+            <button onClick={() => { setModal("add"); setForm({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", stock: "", category: "Kurma", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
+            <div className="relative">
+              <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">⋯</button>
+              {showMenu && <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-lg border border-gray-100 min-w-[180px] z-50 overflow-hidden">
+                {[{ l: "📥 Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "📤 Export Excel", a: exportXLSX }, { l: "📋 Download Template", a: dlTemplate }, { l: "🔄 Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
+              </div>}
+            </div>
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={importFile} className="hidden" />
+
+          <div className="flex flex-col gap-3">
+            {loading ? <Spinner /> : filtered.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Tidak ada produk</div> : filtered.map(p => <div key={p.id} className="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex gap-3 items-center group">
+              <img src={p.image_url || `https://placehold.co/80x80/1a6b3c/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} alt={p.name} className="w-16 h-16 rounded-xl object-cover shrink-0" onError={e => e.target.src = `https://placehold.co/80x80/1a6b3c/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap gap-1.5 mb-1">
+                  <span className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{p.sku}</span>
+                  <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{p.brand || "Umum"}</span>
+                  {p.weight && <span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{p.weight}{p.weight_unit}</span>}
+                </div>
+                <h3 className="font-bold text-gray-800 text-sm truncate">{p.name}</h3>
+                {p.variants && p.variants.length > 0 && <div className="text-[10px] text-blue-500 font-medium mt-0.5">Varian: {p.variants.map(v => v.name).join(", ")}</div>}
+                <div className="flex gap-3 items-center mt-1.5">
+                  <span className="font-extrabold text-[15px]" style={{ color }}>
+                    {p.variants && p.variants.length > 0 
+                      ? (() => { const prices = p.variants.map(v=>v.price); const min = Math.min(...prices); const max = Math.max(...prices); return min === max ? fmt(min) : `${fmt(min)} - ${fmt(max)}`; })()
+                      : fmt(p.price)
+                    }
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.stock <= 5 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-700'}`}>{p.stock} {p.variants && p.variants.length > 0 ? "stok (gabungan)" : "stok"}</span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <button onClick={() => openEdit(p)} className="px-3 py-1.5 bg-orange-50 text-orange-600 hover:bg-orange-100 rounded-lg text-xs font-bold transition-colors">Edit</button>
+                <button onClick={() => del(p.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors">Hapus</button>
+              </div>
+            </div>)}
+          </div>
+
+          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Produk" : "Edit Produk"}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Kategori</label>
+                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">{CATS.filter(c => c !== "Semua").map(c => <option key={c}>{c}</option>)}</select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{form.has_variants ? "SKU Induk (Awalan Varian) *" : "SKU *"}</label>
+                <div className="flex gap-2">
+                  <input value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase() }))} placeholder="cth: KUR-001" className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand/30 uppercase" />
+                  <button onClick={autoSKU} className="px-4 bg-brandLight text-brand hover:bg-brand/20 font-bold rounded-xl transition-colors">⚡ Auto</button>
+                </div>
+                {form.has_variants && <p className="text-[10px] text-gray-400 mt-1">SKU Induk akan digunakan untuk membuat SKU Varian secara otomatis.</p>}
+              </div>
+              {[{ label: "Nama *", key: "name", ph: "Nama produk" }, { label: "Merk", key: "brand", ph: "Brand" }, { label: "URL Foto", key: "image_url", ph: "https://..." }].map(f => <div key={f.key}>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
+                <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>)}
+              <div className="flex items-center justify-between bg-brandLight p-3 rounded-xl border border-brand/20">
+                <label className="text-sm font-bold text-brand">Aktifkan Varian Produk</label>
+                <input type="checkbox" checked={form.has_variants} onChange={e => setForm(f => ({ ...f, has_variants: e.target.checked }))} className="w-5 h-5 rounded text-brand focus:ring-brand" />
+              </div>
+              {!form.has_variants && <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Beli *</label>
+                  <input value={form.cost_price} onChange={e => setForm(p => ({ ...p, cost_price: e.target.value }))} type="number" placeholder="40000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Jual *</label>
+                  <input value={form.price} onChange={e => setForm(p => ({ ...p, price: e.target.value }))} type="number" placeholder="50000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 font-bold text-brand" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Stok Utama *</label>
+                  <input value={form.stock} onChange={e => setForm(p => ({ ...p, stock: e.target.value }))} type="number" placeholder="10" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+              </div>}
+              {!form.has_variants && <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Berat Utama</label>
+                <div className="flex gap-2">
+                  <input value={form.weight} onChange={e => setForm(f => ({ ...f, weight: e.target.value }))} type="number" placeholder="500" className="flex-[2] px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  <select value={form.weight_unit} onChange={e => setForm(f => ({ ...f, weight_unit: e.target.value }))} className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"><option>g</option><option>kg</option><option>ml</option><option>L</option></select>
+                </div>
+              </div>}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Deskripsi</label>
+                <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} placeholder="Deskripsi singkat..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+              </div>
+              {form.has_variants && <div className="space-y-4">
+                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-xs font-bold text-gray-500 uppercase">Tipe Varian (Max 2)</label>
+                    <button onClick={addVarType} className="px-3 py-1 bg-white border border-gray-200 text-brand text-xs font-bold rounded-lg hover:bg-brandLight transition-colors">+ Tambah Tipe</button>
+                  </div>
+                  {form.variant_types.length === 0 && <div className="text-xs text-gray-400 italic">Belum ada tipe varian. Tambahkan tipe seperti "Warna" atau "Ukuran".</div>}
+                  {form.variant_types.map((vt, i) => <div key={i} className="mb-3 last:mb-0 p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
+                    <div className="flex gap-2 mb-2">
+                      <input value={vt.name} onChange={e => updateVarType(i, 'name', e.target.value)} placeholder="Contoh: Warna" className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-brand font-bold" />
+                      <button onClick={() => remVarType(i)} className="px-3 bg-red-50 text-red-500 rounded font-bold text-xs hover:bg-red-500 hover:text-white transition-colors">Hapus</button>
+                    </div>
+                    <input value={vt.options_string || ""} onChange={e => updateVarType(i, 'options_string', e.target.value)} placeholder="Pilihan (pisahkan dengan koma): Merah, Putih, Hitam" className="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
+                  </div>)}
+                </div>
+
+                {form.variants.length > 0 && <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 overflow-hidden">
+                  <label className="block text-xs font-bold text-gray-500 mb-3 uppercase">Matrix Varian</label>
+                  <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="border-b-2 border-gray-200">
+                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/5">Varian</th>
+                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">SKU</th>
+                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">Harga Beli</th>
+                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">Harga Jual</th>
+                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/12">Stok</th>
+                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">Berat</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {form.variants.map((v, i) => <tr key={i} className="hover:bg-gray-100/50 transition-colors">
+                          <td className="py-2.5 pr-2 text-sm font-bold text-gray-800">{v.name}</td>
+                          <td className="py-2 pr-2"><input value={v.sku} onChange={e => updateVarItem(i, 'sku', e.target.value.toUpperCase())} placeholder="SKU" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none uppercase font-mono" /></td>
+                          <td className="py-2 pr-2"><input value={v.cost_price || ""} onChange={e => updateVarItem(i, 'cost_price', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
+                          <td className="py-2 pr-2"><input value={v.price || ""} onChange={e => updateVarItem(i, 'price', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none font-bold text-brand" /></td>
+                          <td className="py-2 pr-2"><input value={v.stock || ""} onChange={e => updateVarItem(i, 'stock', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
+                          <td className="py-2">
+                            <div className="flex bg-white border border-gray-200 rounded overflow-hidden">
+                              <input value={v.weight || ""} onChange={e => updateVarItem(i, 'weight', e.target.value)} type="number" placeholder="0" className="w-full px-2 py-1.5 text-xs focus:outline-none" />
+                              <select value={v.weight_unit || form.weight_unit} onChange={e => updateVarItem(i, 'weight_unit', e.target.value)} className="bg-gray-50 px-1 text-[10px] focus:outline-none border-l border-gray-200"><option>g</option><option>kg</option><option>ml</option><option>L</option></select>
+                            </div>
+                          </td>
+                        </tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>}
+              </div>}
+              <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
+                <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
+                <button onClick={save} disabled={saving} className="flex-[2] py-3.5 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Produk"}</button>
+              </div>
+            </div>
+          </Modal>}
+        </div>
+      );
+    }
+
+    // ── PELANGGAN ────────────────────────────────────────────────
+    function Pelanggan({ customers, transactions, notify, onReload, loading, color }) {
+      const [modal, setModal] = useState(null);
+      const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" });
+      const [search, setSearch] = useState("");
+      const [detail, setDetail] = useState(null);
+      const [saving, setSaving] = useState(false);
+      const [showMenu, setShowMenu] = useState(false);
+      const fileRef = useRef();
+
+      const filtered = customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search) || (c.email || "").toLowerCase().includes(search.toLowerCase()));
+      const custTx = id => transactions.filter(t => t.customer_id === id);
+      const custTotal = id => custTx(id).reduce((s, t) => s + t.total, 0);
+
+      const save = async () => {
+        if (!form.name || !form.phone) return notify("Nama & HP wajib!");
+        setSaving(true);
+        const payload = { name: form.name, phone: form.phone, email: form.email, address: form.address, city: form.city, birthdate: form.birthdate || null, gender: form.gender, notes: form.notes };
+        let error;
+        if (modal === "add") { ({ error } = await db.from("customers").insert(payload)); if (!error) notify("Ditambahkan!"); }
+        else { ({ error } = await db.from("customers").update(payload).eq("id", modal)); if (!error) notify("Diupdate!"); }
+        setSaving(false); if (error) return notify("Gagal: " + error.message);
+        setModal(null); onReload();
+      };
+      const del = async (id) => { const { error } = await db.from("customers").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); setDetail(null); onReload(); };
+      const openEdit = c => { setDetail(null); setModal(c.id); setForm({ name: c.name, phone: c.phone, email: c.email || "", address: c.address || "", city: c.city || "", birthdate: c.birthdate || "", gender: c.gender || "", notes: c.notes || "" }); };
+
+      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(customers.map(c => ({ Nama: c.name, HP: c.phone, Email: c.email || "", Alamat: c.address || "", Kota: c.city || "", TglLahir: c.birthdate || "", Kelamin: c.gender || "", TotalBelanja: custTotal(c.id), JmlTransaksi: custTx(c.id).length }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pelanggan"); XLSX.writeFile(wb, `pelanggan_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
+      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ Nama: "Contoh Pelanggan", HP: "08123456789", Email: "email@contoh.com", Alamat: "Jl. Contoh No. 1", Kota: "Semarang", TglLahir: "1990-01-15", Kelamin: "Laki-laki", Catatan: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pelanggan"); XLSX.writeFile(wb, "template_pelanggan.xlsx"); notify("Template didownload!"); setShowMenu(false); };
+      const importFile = e => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async ev => {
+          try {
+            const wb = XLSX.read(ev.target.result, { type: "binary" });
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            const imported = rows.map(r => ({ name: r.Nama || "", phone: String(r.HP || ""), email: r.Email || "", address: r.Alamat || "", city: r.Kota || "", birthdate: r.TglLahir || null, gender: r.Kelamin || "", notes: r.Catatan || "" })).filter(r => r.name && r.phone);
+            let added = 0, skipped = 0;
+            for (const item of imported) { const ex = customers.find(c => c.phone === item.phone); if (ex) { skipped++; continue; } await db.from("customers").insert(item); added++; }
+            notify(`${added} ditambah, ${skipped} dilewati`); onReload();
+          } catch (err) { notify("Gagal: " + err.message); }
+          e.target.value = "";
+        };
+        reader.readAsBinaryString(file);
+      };
+
+      return (
+        <div className="p-4">
+          <div className="flex gap-2 mb-4">
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / HP / email..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
+            <button onClick={() => { setModal("add"); setForm({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
+            <div className="relative">
+              <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">⋯</button>
+              {showMenu && <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-lg border border-gray-100 min-w-[180px] z-50 overflow-hidden">
+                {[{ l: "📥 Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "📤 Export Excel", a: exportXLSX }, { l: "📋 Download Template", a: dlTemplate }, { l: "🔄 Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
+              </div>}
+            </div>
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={importFile} className="hidden" />
+
+          <div className="flex flex-col gap-3">
+            {loading ? <Spinner /> : filtered.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100 mt-2">Belum ada pelanggan</div> : filtered.map(c => <div key={c.id} onClick={() => setDetail(c)} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-4 cursor-pointer hover:border-brand/30 transition-colors group">
+              <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-black text-xl shrink-0 shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>{c.name[0].toUpperCase()}</div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-gray-800 text-sm truncate">{c.name}</h3>
+                <div className="text-[11px] text-gray-500 font-medium mt-0.5">📱 {c.phone}{c.city ? ` · 📍 ${c.city}` : ""}</div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="font-extrabold text-[15px]" style={{ color }}>{fmt(custTotal(c.id))}</div>
+                <div className="text-[10px] text-gray-400 font-semibold">{custTx(c.id).length} tx</div>
+              </div>
+            </div>)}
+          </div>
+
+          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Pelanggan" : "Edit Pelanggan"}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Jenis Kelamin</label>
+                <div className="flex gap-2">
+                  {["Laki-laki", "Perempuan", "—"].map(g => <button key={g} onClick={() => setForm(f => ({ ...f, gender: g === "—" ? "" : g }))} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors border-2 ${form.gender === (g === "—" ? "" : g) ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{g}</button>)}
+                </div>
+              </div>
+              {[{ label: "Nama Lengkap *", key: "name", ph: "Sesuai KTP" }, { label: "No. HP / WA *", key: "phone", ph: "08xxxxxxxxxx", type: "tel" }, { label: "Email", key: "email", ph: "email@domain.com", type: "email" }, { label: "Alamat", key: "address", ph: "Alamat domisili" }, { label: "Kota", key: "city", ph: "cth: Semarang" }, { label: "Tgl Lahir", key: "birthdate", type: "date", ph: "" }, { label: "Catatan", key: "notes", ph: "Alergi / referensi..." }].map(f => <div key={f.key}>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
+                <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>)}
+              <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
+                <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
+                <button onClick={save} disabled={saving} className="flex-[2] py-3.5 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Data"}</button>
+              </div>
+            </div>
+          </Modal>}
+
+          {detail && <Modal onClose={() => setDetail(null)} title="Detail Pelanggan">
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 rounded-full flex items-center justify-center text-white font-black text-4xl mx-auto mb-3 shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>{detail.name[0]}</div>
+              <h2 className="font-extrabold text-xl text-gray-800">{detail.name}</h2>
+              {detail.gender && <p className="text-xs text-gray-500 font-medium mt-1">{detail.gender}</p>}
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              <div className="bg-brandLight rounded-2xl p-4 text-center border border-brand/10">
+                <div className="text-3xl font-black text-brand mb-1">{custTx(detail.id).length}</div>
+                <div className="text-xs font-bold text-brand/70 uppercase tracking-wider">Transaksi</div>
+              </div>
+              <div className="bg-brandLight rounded-2xl p-4 text-center border border-brand/10 flex flex-col justify-center">
+                <div className="text-[17px] font-black text-brand mb-1 truncate">{fmt(custTotal(detail.id))}</div>
+                <div className="text-xs font-bold text-brand/70 uppercase tracking-wider">Total Belanja</div>
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-3 mb-5">
+              {[{ icon: "📱", val: detail.phone }, { icon: "✉️", val: detail.email }, { icon: "📍", val: [detail.address, detail.city].filter(Boolean).join(", ") }, { icon: "🎂", val: detail.birthdate ? new Date(detail.birthdate).toLocaleDateString("id-ID") : null }, { icon: "📝", val: detail.notes }].filter(r => r.val).map((r, i) => <div key={i} className="flex items-start gap-3 text-sm text-gray-700 font-medium">
+                <span className="shrink-0">{r.icon}</span>
+                <span className="leading-snug">{r.val}</span>
+              </div>)}
+            </div>
+            {custTx(detail.id).length > 0 && <div>
+              <h4 className="font-bold text-sm text-gray-800 mb-3 uppercase tracking-wider">Riwayat Terakhir</h4>
+              <div className="flex flex-col gap-2">
+                {custTx(detail.id).slice(0, 5).map(t => <div key={t.id} className="flex justify-between items-center bg-white border border-gray-100 p-3 rounded-xl shadow-sm">
+                  <div>
+                    <div className="font-mono font-bold text-xs" style={{ color }}>{txCode(t.tx_code)}</div>
+                    <div className="text-[10px] text-gray-500 font-medium mt-0.5">{fmtDate(t.created_at)}</div>
+                  </div>
+                  <span className="font-black text-sm text-gray-800">{fmt(t.total)}</span>
+                </div>)}
+              </div>
+            </div>}
+            <div className="flex gap-2 mt-6 pt-4 border-t border-gray-100">
+              <button onClick={() => openEdit(detail)} className="flex-1 py-3 bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1.5">✏️ Edit</button>
+              <button onClick={() => window.open(`https://wa.me/${detail.phone.replace(/^0/, "62")}`)} className="flex-[1.5] py-3 bg-[#25D366] hover:bg-[#20bd5a] text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5">📱 WhatsApp</button>
+              <button onClick={() => del(detail.id)} className="w-12 py-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl font-bold text-sm transition-colors flex items-center justify-center">🗑️</button>
+            </div>
+          </Modal>}
+        </div>
+      );
+    }
+
+    // ── PROMO ────────────────────────────────────────────────────
+    function PromoPage({ promos, products, notify, onReload, color }) {
+      const [modal, setModal] = useState(null);
+      const empty = { name: "", type: "discount", disc_type: "pct", disc_value: "", min_purchase: "", max_discount: "", start_date: "", end_date: "", bundle_items: [], active: true };
+      const [form, setForm] = useState(empty);
+      const [saving, setSaving] = useState(false);
+      const now = new Date();
+      const isActive = p => { if (!p.active) return false; if (p.start_date && new Date(p.start_date) > now) return false; if (p.end_date && new Date(p.end_date) < now) return false; return true; };
+      const toggleBundle = id => setForm(f => ({ ...f, bundle_items: f.bundle_items.includes(id) ? f.bundle_items.filter(x => x !== id) : [...f.bundle_items, id] }));
+
+      const save = async () => {
+        if (!form.name) return notify("Nama promo wajib!");
+        if (!form.disc_value) return notify("Nilai diskon wajib!");
+        setSaving(true);
+        const payload = { name: form.name, type: form.type, disc_type: form.disc_type, disc_value: parseFloat(form.disc_value), min_purchase: parseFloat(form.min_purchase) || 0, max_discount: parseFloat(form.max_discount) || 0, bundle_items: form.bundle_items, start_date: form.start_date || null, end_date: form.end_date || null, active: form.active };
+        let error;
+        if (modal === "add") { ({ error } = await db.from("promos").insert(payload)); if (!error) notify("Promo ditambahkan!"); }
+        else { ({ error } = await db.from("promos").update(payload).eq("id", modal)); if (!error) notify("Diupdate!"); }
+        setSaving(false); if (error) return notify("Gagal: " + error.message);
+        setModal(null); onReload();
+      };
+      const del = async (id) => { const { error } = await db.from("promos").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); onReload(); };
+      const toggle = async (p) => { await db.from("promos").update({ active: !p.active }).eq("id", p.id); onReload(); };
+
+      return (
+        <div className="p-4">
+          <button onClick={() => { setModal("add"); setForm({ ...empty }); }} className="w-full bg-brand text-white font-bold rounded-xl py-3.5 mb-5 shadow-sm hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2">+ Buat Promo Baru</button>
+
+          {promos.length === 0 && <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada promo</div>}
+
+          <div className="flex flex-col gap-4">
+            {promos.map(p => <div key={p.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 relative overflow-hidden group">
+              {!p.active && <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10"></div>}
+              <div className="flex justify-between items-start mb-4 relative z-20">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="font-extrabold text-gray-800 text-base">{p.name}</span>
+                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider ${isActive(p) ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{isActive(p) ? "Aktif" : "Nonaktif"}</span>
+                  </div>
+                  <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5">
+                    <span className="bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{p.type === "discount" ? "💰 Diskon" : "📦 Bundling"}</span>
+                    <span>{p.disc_type === "pct" ? `${p.disc_value}%` : `${fmt(p.disc_value)}`} off{p.min_purchase > 0 ? ` · min ${fmt(p.min_purchase)}` : ""}</span>
+                  </div>
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <button onClick={() => { setModal(p.id); setForm({ ...p, disc_value: String(p.disc_value), min_purchase: String(p.min_purchase || ""), max_discount: String(p.max_discount || ""), start_date: p.start_date ? p.start_date.slice(0, 16) : "", end_date: p.end_date ? p.end_date.slice(0, 16) : "", bundle_items: p.bundle_items || [] }); }} className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-lg transition-colors">✏️</button>
+                  <button onClick={() => del(p.id)} className="w-8 h-8 flex items-center justify-center bg-red-50 hover:bg-red-100 text-red-500 rounded-lg transition-colors">✕</button>
+                </div>
+              </div>
+              <button onClick={() => toggle(p)} className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all relative z-20 border-2 ${p.active ? 'border-red-100 bg-red-50 text-red-600 hover:bg-red-100' : 'border-brandLight bg-white text-brand hover:bg-brandLight'}`}>{p.active ? "⏸ Nonaktifkan Promo" : "▶ Aktifkan Promo"}</button>
+            </div>)}
+          </div>
+
+          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Buat Promo" : "Edit Promo"}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Nama Promo *</label>
+                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="cth: Promo Ramadhan" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Tipe Promo</label>
+                <div className="flex gap-2">
+                  {[{ id: "discount", label: "💰 Diskon Biasa" }, { id: "bundling", label: "📦 Bundling Produk" }].map(t => <button key={t.id} onClick={() => setForm(f => ({ ...f, type: t.id }))} className={`flex-1 py-3 rounded-xl text-xs font-bold transition-colors border-2 ${form.type === t.id ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{t.label}</button>)}
+                </div>
+              </div>
+              {form.type === "bundling" && <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Pilih Produk Bundling</label>
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl p-2 bg-gray-50 space-y-1">
+                  {products.map(p => <div key={p.id} onClick={() => toggleBundle(p.id)} className={`flex items-center gap-3 p-2 cursor-pointer rounded-lg transition-colors border ${form.bundle_items.includes(p.id) ? 'bg-brandLight border-brand/30' : 'bg-white border-transparent hover:border-gray-200'}`}>
+                    <div className={`w-5 h-5 rounded md border-2 flex items-center justify-center shrink-0 ${form.bundle_items.includes(p.id) ? 'border-brand bg-brand' : 'border-gray-300 bg-white'}`}>{form.bundle_items.includes(p.id) && <span className="text-white text-xs font-bold">✓</span>}</div>
+                    <span className="text-sm font-medium text-gray-700 truncate">{p.name}</span>
+                  </div>)}
+                </div>
+              </div>}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Besaran Diskon *</label>
+                <div className="flex gap-2 mb-2">
+                  {[{ id: "pct", label: "% Persen" }, { id: "nominal", label: "Rp Nominal" }].map(t => <button key={t.id} onClick={() => setForm(f => ({ ...f, disc_type: t.id }))} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border-2 ${form.disc_type === t.id ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{t.label}</button>)}
+                </div>
+                <input value={form.disc_value} onChange={e => setForm(f => ({ ...f, disc_value: e.target.value }))} type="number" placeholder={form.disc_type === "pct" ? "cth: 10" : "cth: 20000"} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Min. Belanja</label>
+                  <input value={form.min_purchase} onChange={e => setForm(f => ({ ...f, min_purchase: e.target.value }))} type="number" placeholder="0 = tanpa batas" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Maks. Diskon</label>
+                  <input value={form.max_discount} onChange={e => setForm(f => ({ ...f, max_discount: e.target.value }))} type="number" placeholder="0 = tanpa batas" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase">Mulai (Opsional)</label>
+                  <input value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} type="datetime-local" className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase">Berakhir (Opsional)</label>
+                  <input value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} type="datetime-local" className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
+                <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
+                <button onClick={save} disabled={saving} className="flex-[2] py-3.5 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Promo"}</button>
+              </div>
+            </div>
+          </Modal>}
+        </div>
+      );
+    }
+
+    // ── LAPORAN ───────────────────────────────────────────────────
+    function Laporan({ transactions, products, customers, notify, loading, color }) {
+      const [tab, setTab] = useState("laporan");
+      const [range, setRange] = useState("today");
+      const [txDetail, setTxDetail] = useState(null);
+      const now = new Date();
+
+      const filter = t => {
+        const d = new Date(t.created_at);
+        if (range === "today") return d.toDateString() === now.toDateString();
+        if (range === "week") return (now - d) <= 7 * 864e5;
+        if (range === "month") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        return true;
+      };
+
+      const filtered = transactions.filter(filter);
+      const revenue = filtered.reduce((s, t) => s + t.total, 0);
+      const totalDisc = filtered.reduce((s, t) => s + (t.discount_total || 0), 0);
+      const byMethod = {}; PAY_METHODS.forEach(m => { byMethod[m] = filtered.filter(t => t.pay_method === m).reduce((s, t) => s + t.total, 0); });
+      const soldMap = {}; filtered.forEach(t => (t.transaction_items || []).forEach(i => { soldMap[i.name] = (soldMap[i.name] || 0) + i.qty; }));
+      const top = Object.entries(soldMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const cashierMap = {}; filtered.forEach(t => { if (t.cashier_name) cashierMap[t.cashier_name] = (cashierMap[t.cashier_name] || 0) + t.total; });
+
+      const expTx = () => { const ws = XLSX.utils.json_to_sheet(filtered.flatMap(t => (t.transaction_items || []).map(i => ({ KodeTx: txCode(t.tx_code), Tanggal: fmtDate(t.created_at), Pelanggan: t.customer_name, Kasir: t.cashier_name || "-", SKU: i.sku, Produk: i.name, Qty: i.qty, Harga: i.price, Subtotal: i.subtotal, Total: t.total, Metode: t.pay_method || "Cash" })))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Transaksi"); XLSX.writeFile(wb, `transaksi_${Date.now()}.xlsx`); notify("Diexport!"); };
+
+      const R = ({ label, val, bold, c }) => <div className="flex justify-between items-center py-2.5 border-b border-gray-50 last:border-0 text-sm"><span className="text-gray-500 font-medium">{label}</span><span className={`${bold ? 'font-extrabold' : 'font-semibold'} ${c || 'text-gray-800'}`}>{val}</span></div>;
+      const rb = (id, l) => <button key={id} onClick={() => setRange(id)} className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${range === id ? 'bg-dark text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{l}</button>;
+
+      return (
+        <div className="p-4">
+          <div className="flex gap-2 mb-5 bg-white p-1.5 rounded-2xl border border-gray-100 shadow-sm">
+            {[{ id: "laporan", label: "📈 Laporan" }, { id: "transaksi", label: "🧾 Transaksi" }, { id: "ekspor", label: "📊 Export" }].map(t => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${tab === t.id ? 'bg-gray-100 text-dark shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>{t.label}</button>)}
+          </div>
+
+          {tab === "laporan" && <div className="space-y-4 animate-fade-up">
+            <div className="flex gap-2 flex-wrap mb-2">{[["today", "Hari ini"], ["week", "7 Hari"], ["month", "Bulan ini"], ["all", "Semua"]].map(([id, l]) => rb(id, l))}</div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {[{ label: "Transaksi", val: filtered.length, c: "text-blue-500" }, { label: "Omzet", val: fmt(revenue), c: "text-green-600" }, { label: "Total Diskon", val: fmt(totalDisc), c: "text-red-500" }, { label: "Pelanggan", val: customers.length, c: "text-purple-500" }].map(s => <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                <div className={`text-xl font-black mb-1 truncate ${s.c}`}>{s.val}</div>
+                <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">{s.label}</div>
+              </div>)}
+            </div>
+
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider">💳 Metode Pembayaran</div>
+              {PAY_METHODS.map(m => <R key={m} label={`${m === "Cash" ? "💵" : m === "Transfer Bank" ? "🏦" : "📱"} ${m}`} val={fmt(byMethod[m] || 0)} bold c="text-brand" />)}
+            </div>
+
+            {Object.keys(cashierMap).length > 0 && <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider">🧾 Omzet per Kasir</div>
+              {Object.entries(cashierMap).sort((a, b) => b[1] - a[1]).map(([n, rev]) => <R key={n} label={n} val={fmt(rev)} bold c="text-brand" />)}
+            </div>}
+
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider">🏆 Produk Terlaris</div>
+              {top.length === 0 ? <div className="text-gray-400 text-sm text-center py-4">Belum ada data</div> : top.map(([name, qty], i) => <R key={name} label={`${i + 1}. ${name}`} val={`${qty} terjual`} bold c="text-brand" />)}
+            </div>
+          </div>}
+
+          {tab === "transaksi" && <div className="space-y-4 animate-fade-up">
+            <div className="flex gap-2 flex-wrap mb-2">{[["today", "Hari ini"], ["week", "7 Hari"], ["month", "Bulan ini"], ["all", "Semua"]].map(([id, l]) => rb(id, l))}</div>
+
+            {loading ? <Spinner /> : <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+              <div className="font-extrabold text-sm text-gray-800 mb-4 pb-3 border-b border-gray-100 flex justify-between">
+                <span>{filtered.length} Transaksi</span>
+                <span style={{ color }}>{fmt(revenue)}</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {filtered.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm">Belum ada transaksi</div> : filtered.map(t => <div key={t.id} onClick={() => setTxDetail(t)} className="flex justify-between items-start p-3 bg-gray-50 rounded-xl border border-gray-100 cursor-pointer hover:border-brand/30 transition-colors">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-mono font-bold text-xs" style={{ color }}>{txCode(t.tx_code)}</span>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${t.pay_method === "Cash" ? 'bg-green-100 text-green-700' : t.pay_method === "QRIS" ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{t.pay_method || "Cash"}</span>
+                    </div>
+                    <div className="text-xs font-semibold text-gray-700">{t.customer_name || "Umum"}{t.cashier_name ? ` · ${t.cashier_name}` : ""}</div>
+                    <div className="text-[10px] text-gray-500 font-medium mt-0.5">{fmtDate(t.created_at)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-black text-sm text-gray-900">{fmt(t.total)}</div>
+                    {t.discount_total > 0 && <div className="text-[10px] text-red-500 font-bold mt-0.5">-{fmt(t.discount_total)}</div>}
+                  </div>
+                </div>)}
+              </div>
+            </div>}
+          </div>}
+
+          {tab === "ekspor" && <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 animate-fade-up">
+            <div className="font-extrabold text-sm text-gray-800 mb-5 uppercase tracking-wider">📤 Export Data</div>
+            <div className="flex flex-col gap-3">
+              <button onClick={expTx} className="w-full py-4 bg-purple-50 text-purple-600 hover:bg-purple-100 border border-purple-100 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2">🧾 Export Transaksi (.xlsx)</button>
+              <button onClick={() => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, Merk: p.brand, Harga: p.price, Stok: p.stock, Kategori: p.category }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); }} className="w-full py-4 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2">📦 Export Produk (.xlsx)</button>
+            </div>
+          </div>}
+
+          {txDetail && <Modal onClose={() => setTxDetail(null)} title="Detail Transaksi">
+            <div className="bg-brandLight rounded-2xl p-5 mb-5 border border-brand/10">
+              <div className="text-center mb-4">
+                <div className="text-xs text-brand/70 font-bold uppercase tracking-wider mb-1">Kode Transaksi</div>
+                <div className="font-mono font-black text-2xl" style={{ color }}>{txCode(txDetail.tx_code)}</div>
+              </div>
+              <div className="space-y-2">
+                {[{ l: "Tanggal", v: fmtDate(txDetail.created_at) }, { l: "Pelanggan", v: txDetail.customer_name || "Umum" }, { l: "Kasir", v: txDetail.cashier_name || "-" }, { l: "Metode", v: txDetail.pay_method || "Cash" }].map(r => <div key={r.l} className="flex justify-between text-sm"><span className="text-gray-500 font-medium">{r.l}</span><span className="font-bold text-gray-800">{r.v}</span></div>)}
+              </div>
+            </div>
+            <div className="space-y-3 mb-5 border-b border-dashed border-gray-200 pb-5">
+              {(txDetail.transaction_items || []).map((i, idx) => <div key={idx} className="flex justify-between items-start text-sm">
+                <span className="font-medium text-gray-700 pr-4 leading-snug">{i.name}{i.variant_name ? ` (${i.variant_name})` : ""} <span className="text-gray-400 font-bold">x{i.qty}</span></span>
+                <span className="font-bold text-gray-900 shrink-0">{fmt(i.subtotal || i.price * i.qty)}</span>
+              </div>)}
+            </div>
+
+            {txDetail.discount_total > 0 && <div className="space-y-2 mb-3">
+              <div className="flex justify-between text-sm text-gray-500 font-medium"><span>Subtotal</span><span>{fmt(txDetail.subtotal)}</span></div>
+              {(txDetail.applied_promos || []).map((p, i) => <div key={i} className="flex justify-between text-xs font-bold" style={{ color }}><span>🏷️ {p.name}</span><span>-{fmt(p.discount)}</span></div>)}
+            </div>}
+
+            <div className="flex justify-between items-center py-3 border-t-2 mt-2" style={{ borderColor: color }}>
+              <span className="font-extrabold text-gray-800 uppercase tracking-wider">Total</span>
+              <span className="font-black text-xl" style={{ color }}>{fmt(txDetail.total)}</span>
+            </div>
+
+            {txDetail.pay_method === "Cash" && <div className="space-y-1 mt-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+              <div className="flex justify-between text-xs text-gray-500 font-medium"><span>Tunai</span><span className="font-bold text-gray-700">{fmt(txDetail.cash_received)}</span></div>
+              <div className="flex justify-between text-xs text-gray-500 font-medium"><span>Kembalian</span><span className="font-bold text-gray-700">{fmt(txDetail.change_amount)}</span></div>
+            </div>}
+          </Modal>}
+        </div>
+      );
+    }
+
+    // ── SESI KASIR ────────────────────────────────────────────────
+    function SesiPage({ sessions, onReload, notify, color }) {
+      const [detail, setDetail] = useState(null);
+      const open = sessions.filter(s => s.status === "open");
+      const closed = sessions.filter(s => s.status === "closed");
+
+      return (
+        <div className="p-4">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="font-extrabold text-lg text-gray-800">Monitor Sesi</h2>
+            <button onClick={onReload} className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-bold shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2">🔄 Refresh</button>
+          </div>
+
+          {open.length > 0 && <div className="mb-8">
+            <div className="text-xs font-extrabold text-brand uppercase tracking-wider mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-brand animate-pulse"></span> SESI AKTIF ({open.length})</div>
+            <div className="flex flex-col gap-3">
+              {open.map(s => <div key={s.id} onClick={() => setDetail(s)} className="bg-white rounded-2xl p-4 shadow-sm border-l-4 border-y border-r border-gray-100 cursor-pointer hover:shadow-md transition-all group" style={{ borderLeftColor: color }}>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="font-bold text-sm text-gray-800 mb-1">{s.cashier_name}</div>
+                    <div className="text-[11px] text-gray-500 font-medium">PIC: <span className="font-bold text-gray-700">{s.opened_by || "-"}</span></div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">Buka: {fmtDate(s.opened_at)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-black text-sm" style={{ color }}>{fmt(s.opening_amount || 0)}</div>
+                    <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">Uang Awal</div>
+                  </div>
+                </div>
+              </div>)}
+            </div>
+          </div>}
+
+          {closed.length > 0 && <div>
+            <div className="text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-gray-400"></span> SESI SELESAI ({closed.length})</div>
+            <div className="flex flex-col gap-3">
+              {closed.slice(0, 20).map(s => <div key={s.id} onClick={() => setDetail(s)} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 cursor-pointer hover:border-gray-300 transition-colors">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="font-bold text-sm text-gray-800 mb-1">{s.cashier_name}</div>
+                    <div className="text-[10px] text-gray-500 font-medium">{fmtDate(s.opened_at)}</div>
+                    <div className="text-[10px] text-gray-500 font-medium mt-0.5">↓ {s.closed_at ? fmtDate(s.closed_at) : "-"}</div>
+                  </div>
+                  <div className="text-right">
+                    {s.summary && <>
+                      <div className="font-black text-sm text-gray-800">{fmt(s.summary.total_revenue || 0)}</div>
+                      <div className="text-[10px] font-bold text-brand bg-brandLight px-1.5 py-0.5 rounded mt-1 inline-block">{s.summary.total_transactions || 0} tx</div>
+                    </>}
+                  </div>
+                </div>
+              </div>)}
+            </div>
+          </div>}
+
+          {sessions.length === 0 && <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada data sesi kasir</div>}
+
+          {detail && <Modal onClose={() => setDetail(null)} title={`Sesi: ${detail.cashier_name}`}>
+            <div className={`rounded-2xl p-4 mb-5 border ${detail.status === "open" ? 'bg-green-50 border-green-100' : 'bg-gray-50 border-gray-200'}`}>
+              {[{ l: "Status", v: detail.status === "open" ? "🟢 Aktif" : "🔴 Selesai", bold: true }, { l: "Kasir", v: detail.cashier_name, bold: true }, { l: "PIC", v: detail.opened_by || "-" }, { l: "Waktu Buka", v: fmtDate(detail.opened_at) }, { l: "Waktu Tutup", v: detail.closed_at ? fmtDate(detail.closed_at) : "-" }, { l: "Modal Awal", v: fmt(detail.opening_amount || 0), bold: true, color }].map(r => <div key={r.l} className="flex justify-between items-center py-1.5 text-sm">
+                <span className="text-gray-500 font-medium">{r.l}</span>
+                <span className={`${r.bold ? 'font-bold text-gray-800' : 'font-medium text-gray-700'}`} style={r.color ? { color: r.color } : {}}>{r.v}</span>
+              </div>)}
+            </div>
+
+            {detail.summary && Object.keys(detail.summary).length > 0 && <div className="mb-5">
+              <div className="font-extrabold text-sm text-gray-800 mb-3 uppercase tracking-wider">📊 Ringkasan Penjualan</div>
+              <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm space-y-3">
+                {[{ l: "Total Transaksi", v: detail.summary.total_transactions + " tx" }, { l: "Total Omzet", v: fmt(detail.summary.total_revenue || 0) }, { l: "Cash Masuk", v: fmt(detail.summary.total_cash || 0) }, { l: "Non-Cash", v: fmt(detail.summary.total_non_cash || 0) }].map(r => <div key={r.l} className="flex justify-between items-center text-sm"><span className="text-gray-500 font-medium">{r.l}</span><span className="font-bold text-gray-800">{r.v}</span></div>)}
+
+                <div className="border-t border-dashed border-gray-200 pt-3 mt-3 space-y-3">
+                  <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-medium">Ekspektasi di Laci</span><span className="font-bold text-gray-800">{fmt(detail.summary.expected_cash || 0)}</span></div>
+                  <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-medium">Aktual di Laci</span><span className="font-extrabold text-gray-900">{fmt(detail.summary.closing_amount || 0)}</span></div>
+                  <div className={`flex justify-between items-center text-sm p-2 rounded-lg ${!detail.summary.difference ? 'bg-green-50' : detail.summary.difference > 0 ? 'bg-blue-50' : 'bg-red-50'}`}>
+                    <span className="font-bold text-gray-700">Selisih</span>
+                    <span className={`font-black ${!detail.summary.difference ? 'text-green-600' : detail.summary.difference > 0 ? 'text-blue-600' : 'text-red-600'}`}>{fmt(detail.summary.difference || 0)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>}
+
+            <div className="space-y-2">
+              {detail.notes_open && <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-xs text-gray-600"><strong className="text-gray-800 block mb-1">📝 Catatan Buka:</strong> {detail.notes_open}</div>}
+              {detail.notes_close && <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-xs text-gray-600"><strong className="text-gray-800 block mb-1">📝 Catatan Tutup:</strong> {detail.notes_close}</div>}
+            </div>
+          </Modal>}
+        </div>
+      );
+    }
+
+    // ── PENGATURAN ────────────────────────────────────────────────
+    function Pengaturan({ cashiers, settings, notify, role, onReload, color }) {
+      const [tab, setTab] = useState("kasir");
+      const [cForm, setCForm] = useState({ code: "", name: "" });
+      const [cModal, setCModal] = useState(null);
+      const [stForm, setStForm] = useState({ ...settings });
+      const [saving, setSaving] = useState(false);
+
+      useEffect(() => { setStForm({ ...settings }); }, [settings]);
+
+      const saveCashier = async () => {
+        if (!cForm.code || !cForm.name) return notify("Kode & nama wajib!");
+        setSaving(true);
+        let error;
+        if (cModal === "add") { ({ error } = await db.from("cashiers").insert({ code: cForm.code.toUpperCase(), name: cForm.name, active: true })); if (!error) notify("Kasir ditambahkan!"); }
+        else { ({ error } = await db.from("cashiers").update({ code: cForm.code.toUpperCase(), name: cForm.name }).eq("id", cModal)); if (!error) notify("Diupdate!"); }
+        setSaving(false); if (error) return notify("Gagal: " + error.message);
+        setCModal(null); setCForm({ code: "", name: "" }); onReload();
+      };
+      const toggleCashier = async (c) => { await db.from("cashiers").update({ active: !c.active }).eq("id", c.id); onReload(); };
+      const delCashier = async (id) => { const { error } = await db.from("cashiers").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); onReload(); };
+
+      const saveSettings = async () => {
+        setSaving(true);
+        for (const [key, value] of Object.entries(stForm)) { await db.from("settings").upsert({ key, value: String(value) }, { onConflict: "key" }); }
+        setSaving(false); notify("Pengaturan disimpan!"); onReload();
+      };
+
+      const resetData = async (type) => {
+        const msg = type === 'all' ? 'SEMUA DATA (Produk, Transaksi, Pelanggan, Promo, Sesi Kasir)' : (type === 'transactions' ? 'DATA TRANSAKSI (termasuk Sesi Kasir)' : 'DATA PRODUK');
+        if (!confirm(`⚠️ PERINGATAN ⚠️\n\nAnda yakin ingin mereset ${msg}? Tindakan ini PERMANEN dan data yang dihapus tidak dapat dikembalikan!`)) return;
+        
+        setSaving(true);
+        try {
+          if (type === 'transactions' || type === 'all') {
+            await db.from("transaction_items").delete().not("id", "is", null);
+            await db.from("transactions").delete().not("id", "is", null);
+            await db.from("cash_sessions").delete().not("id", "is", null);
+          }
+          if (type === 'products' || type === 'all') {
+            await db.from("products").delete().not("id", "is", null);
+          }
+          if (type === 'all') {
+            await db.from("customers").delete().not("id", "is", null);
+            await db.from("promos").delete().not("id", "is", null);
+          }
+          notify("Data berhasil direset!");
+          onReload();
+        } catch (e) {
+          notify("Gagal reset: " + e.message);
+        }
+        setSaving(false);
+      };
+
+      const tabs = [{ id: "kasir", label: "🧾 Kasir" }, { id: "pin", label: "🔐 PIN Akses" }, { id: "toko", label: "🏪 Info Toko" }, { id: "struk", label: "🖨️ Desain Struk" }];
+      if (role === "owner") tabs.push({ id: "reset", label: "🧨 Reset Data" });
+
+      return (
+        <div className="p-4">
+          <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
+            {tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-sm border ${tab === t.id ? 'bg-dark text-white border-dark' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>{t.label}</button>)}
+          </div>
+
+          {tab === "kasir" && <div className="animate-fade-up">
+            <button onClick={() => { setCModal("add"); setCForm({ code: "", name: "" }); }} className="w-full bg-dark text-white font-bold rounded-xl py-3.5 mb-5 shadow-sm hover:bg-gray-900 transition-colors flex items-center justify-center gap-2">+ Tambah Akun Kasir</button>
+
+            {cashiers.length === 0 && <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada kasir terdaftar</div>}
+
+            <div className="flex flex-col gap-3">
+              {cashiers.map(c => <div key={c.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-dark to-gray-600 flex items-center justify-center text-white font-black text-xl shadow-inner shrink-0">{c.name[0].toUpperCase()}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="font-bold text-gray-800 text-sm truncate">{c.name}</h3>
+                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider ${c.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? "Aktif" : "Off"}</span>
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono font-medium">{c.code}</div>
+                  </div>
+                </div>
+                <div className="flex gap-2 border-t border-gray-50 pt-3">
+                  <button onClick={() => { setCModal(c.id); setCForm({ code: c.code, name: c.name }); }} className="flex-1 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold transition-colors border border-gray-200">Edit</button>
+                  <button onClick={() => toggleCashier(c)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border ${c.active ? 'bg-red-50 text-red-600 border-red-100 hover:bg-red-100' : 'bg-brandLight text-brand border-brand/20 hover:bg-brand/10'}`}>{c.active ? "Matikan" : "Aktifkan"}</button>
+                  <button onClick={() => delCashier(c.id)} className="w-12 py-2 bg-red-50 hover:bg-red-100 text-red-500 rounded-lg text-xs font-bold transition-colors border border-red-100 flex justify-center items-center">🗑️</button>
+                </div>
+              </div>)}
+            </div>
+
+            {cModal && <Modal onClose={() => setCModal(null)} title={cModal === "add" ? "Tambah Kasir" : "Edit Kasir"}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Kode Kasir *</label>
+                  <input value={cForm.code} onChange={e => setCForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="cth: KSR-001" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-dark/30 uppercase" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Nama Lengkap *</label>
+                  <input value={cForm.name} onChange={e => setCForm(f => ({ ...f, name: e.target.value }))} placeholder="cth: Budi Santoso" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
+                </div>
+                <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
+                  <button onClick={() => setCModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
+                  <button onClick={saveCashier} disabled={saving} className="flex-[2] py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Data"}</button>
+                </div>
+              </div>
+            </Modal>}
+          </div>}
+
+          {tab === "pin" && <div className="animate-fade-up">
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-5">
+              <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 mb-6 flex gap-3 items-start">
+                <span className="text-xl">⚠️</span>
+                <p className="text-xs text-orange-800 font-medium leading-relaxed">Sangat disarankan untuk mengubah PIN default demi keamanan data toko Anda. PIN tersimpan di database.</p>
+              </div>
+              <div className="space-y-5">
+                {[{ label: "PIN Akses Kasir", key: "kasir_pin", hint: "Digunakan staf untuk membuka /kasir.html" }, { label: "PIN Akses Admin", key: "admin_pin", hint: "Akses halaman admin (terbatas laporan)" }, { label: "PIN Akses Owner", key: "owner_pin", hint: "Akses penuh semua fitur & pengaturan" }].map(f => <div key={f.key}>
+                  <label className="block text-xs font-bold text-gray-800 mb-2 uppercase tracking-wider">{f.label}</label>
+                  <input value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} type="password" placeholder="4-6 digit" maxLength={6} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xl font-mono tracking-[0.5em] text-center focus:outline-none focus:ring-2 focus:ring-dark/30" onFocus={e => e.target.type = "text"} onBlur={e => e.target.type = "password"} />
+                  <div className="text-[10px] text-gray-400 font-medium mt-1.5 text-center">{f.hint}</div>
+                </div>)}
+              </div>
+            </div>
+            <button onClick={saveSettings} disabled={saving} className="w-full py-4 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Perubahan PIN"}</button>
+          </div>}
+
+          {tab === "toko" && <div className="animate-fade-up">
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-5 space-y-4">
+              {[{ label: "Nama Toko", key: "store_name", ph: "Toko Oleh-Oleh Haji & Umroh" }, { label: "Tagline", key: "store_tagline", ph: "Pilihan Berkah dari Tanah Suci" }, { label: "Alamat Lengkap", key: "store_address", ph: "Jl. Contoh No. 1, Semarang" }, { label: "No. Telepon", key: "store_phone", ph: "08xxxxxxxxxx" }, { label: "No. WhatsApp Admin", key: "wa_number", ph: "628xxxxxxxxxx" }, { label: "URL Logo (Image)", key: "store_logo", ph: "https://..." }].map(f => <div key={f.key}>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
+                <input value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
+              </div>)}
+              {stForm.store_logo && <div className="pt-2">
+                <label className="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Preview Logo</label>
+                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex items-center justify-center">
+                  <img src={stForm.store_logo} alt="preview" className="h-16 object-contain" onError={e => e.target.style.display = "none"} />
+                </div>
+              </div>}
+            </div>
+            <button onClick={saveSettings} disabled={saving} className="w-full py-4 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Info Toko"}</button>
+          </div>}
+
+          {tab === "reset" && role === "owner" && <div className="animate-fade-up">
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-red-100 mb-5 space-y-4">
+               <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-100 mb-4">
+                  <h4 className="font-bold flex items-center gap-2">⚠️ Area Berbahaya</h4>
+                  <p className="text-xs mt-1 font-medium">Tindakan ini tidak dapat dibatalkan. Pastikan Anda telah mengekspor data laporan sebelum melakukan reset.</p>
+               </div>
+               
+               <button onClick={() => resetData('transactions')} disabled={saving} className="w-full py-4 bg-white border-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-500 rounded-xl font-bold text-sm transition-all text-left px-5 flex justify-between items-center shadow-sm disabled:opacity-50">
+                 <div>
+                   <div className="text-base">Reset Data Transaksi</div>
+                   <div className="text-xs font-medium text-red-400 mt-0.5">Menghapus riwayat transaksi dan sesi kasir</div>
+                 </div>
+                 <span className="text-2xl">🧾</span>
+               </button>
+               
+               <button onClick={() => resetData('products')} disabled={saving} className="w-full py-4 bg-white border-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-500 rounded-xl font-bold text-sm transition-all text-left px-5 flex justify-between items-center shadow-sm disabled:opacity-50 mt-3">
+                 <div>
+                   <div className="text-base">Reset Data Produk</div>
+                   <div className="text-xs font-medium text-red-400 mt-0.5">Menghapus semua katalog produk</div>
+                 </div>
+                 <span className="text-2xl">📦</span>
+               </button>
+
+               <div className="border-t border-dashed border-red-200 my-6"></div>
+
+               <button onClick={() => resetData('all')} disabled={saving} className="w-full py-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black text-sm transition-all text-left px-5 flex justify-between items-center shadow-md disabled:opacity-50 hover:shadow-lg active:scale-[0.98]">
+                 <div>
+                   <div className="text-base">Reset SEMUA DATA</div>
+                   <div className="text-xs font-semibold text-red-200 mt-0.5">Hapus Produk, Transaksi, Pelanggan & Promo</div>
+                 </div>
+                 <span className="text-3xl">🧨</span>
+               </button>
+            </div>
+          </div>}
+
+          {tab === "struk" && <div className="animate-fade-up">
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-5 space-y-5">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Ucapan / Footer Struk</label>
+                <input value={stForm.store_footer || ""} onChange={e => setStForm(s => ({ ...s, store_footer: e.target.value }))} placeholder="Terima kasih, semoga berkah 🤲" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Warna Tema Utama</label>
+                <div className="flex gap-3 items-center mb-3">
+                  <div className="relative w-12 h-12 rounded-xl overflow-hidden border-2 border-gray-200 shadow-inner shrink-0 cursor-pointer">
+                    <input value={stForm.receipt_color || "#1a6b3c"} onChange={e => setStForm(s => ({ ...s, receipt_color: e.target.value }))} type="color" className="absolute inset-[-10px] w-20 h-20 cursor-pointer" />
+                  </div>
+                  <input value={stForm.receipt_color || "#1a6b3c"} onChange={e => setStForm(s => ({ ...s, receipt_color: e.target.value }))} placeholder="#1a6b3c" className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-dark/30" />
+                </div>
+                <div className="flex gap-2 flex-wrap bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  {["#1a6b3c", "#2563eb", "#dc2626", "#d97706", "#7c3aed", "#0891b2", "#1a1a2e", "#065f46"].map(c => <div key={c} onClick={() => setStForm(s => ({ ...s, receipt_color: c }))} className={`w-8 h-8 rounded-lg cursor-pointer shadow-sm transition-transform hover:scale-110 ${stForm.receipt_color === c ? 'ring-2 ring-offset-2 ring-gray-400' : ''}`} style={{ background: c }} />)}
+                </div>
+              </div>
+              <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
+                <div className="text-[10px] font-bold text-gray-400 mb-3 uppercase tracking-widest text-center">Preview Struk Kasir</div>
+                <div className="font-mono text-[11px] bg-white p-4 rounded-lg shadow-sm border border-gray-100 max-w-[250px] mx-auto text-gray-600">
+                  {stForm.store_logo && <div className="flex justify-center mb-2"><img src={stForm.store_logo} className="h-6 object-contain" onError={e => e.target.style.display = "none"} /></div>}
+                  <div className="text-center font-bold text-sm mb-1" style={{ color: stForm.receipt_color || "#1a6b3c" }}>{stForm.store_name || "Nama Toko"}</div>
+                  <div className="text-center text-[9px] mb-3 leading-tight">{stForm.store_address || "Alamat Toko"}</div>
+                  <div className="border-t border-dashed border-gray-300 py-2 space-y-1">
+                    <div className="flex justify-between"><span>Produk A x2</span><span>50.000</span></div>
+                    <div className="flex justify-between"><span>Produk B x1</span><span>25.000</span></div>
+                  </div>
+                  <div className="flex justify-between font-bold text-sm pt-2 border-t border-dashed border-gray-300" style={{ color: stForm.receipt_color || "#1a6b3c" }}><span>TOTAL</span><span>75.000</span></div>
+                  <div className="text-center mt-4 text-[9px]">{stForm.store_footer || "Terima kasih 🤲"}</div>
+                </div>
+              </div>
+            </div>
+            <button onClick={saveSettings} disabled={saving} className="w-full py-4 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Desain"}</button>
+          </div>}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+
+</html>
