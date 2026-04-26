@@ -74,13 +74,13 @@
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-    const CATS = ["Semua", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
+    const CATS_DEFAULT = ["Semua","Air Zamzam","Kurma","Tasbih","Sajadah","Parfum","Peci & Mukena","Lainnya"];
     const PAY_METHODS = ["Cash", "Transfer Bank", "QRIS"];
     const fmt = n => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
     const fmtDate = d => new Date(d).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
     function Toast({ msg }) { if (!msg) return null; return <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-dark text-white px-5 py-2.5 rounded-full z-[9999] text-sm font-medium shadow-xl whitespace-nowrap animate-fade-up">{msg}</div>; }
-    function Spinner() { return <div className="flex items-center justify-center p-10"><div className="w-8 h-8 border-4 border-gray-200 border-t-gold rounded-full animate-spin"></div></div>; }
+    function Spinner() { return <div className="flex items-center justify-center p-10"><div className="w-8 h-8 border-4 border-gray-200 border-t-brand rounded-full animate-spin"></div></div>; }
     function Modal({ children, onClose, title, full }) {
       return (
         <div className="fixed inset-0 bg-black/60 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 transition-opacity animate-fade-in" onClick={onClose}>
@@ -131,7 +131,23 @@
           const kasirPin = settings?.kasir_pin || "1234";
           if (next === ownerPin) return onSuccess({ role: "owner", name: "Owner" });
           if (next === adminPin) return onSuccess({ role: "admin", name: "Admin" });
-          if (next === kasirPin) { setLoading(true); try { const { data } = await db.from("cash_sessions").select("*").eq("status", "open").single(); if (data) { onSuccess({ role: "kasir", name: data.cashier_name, session_id: data.id }); } else { onSuccess({ role: "kasir", name: "Kasir", needs_open: true }); } } catch (e) { } setLoading(false); return; }
+          if (next === kasirPin) { 
+            setLoading(true); 
+            try { 
+              const { data, error } = await db.from("cash_sessions").select("*").eq("status", "open").limit(1).maybeSingle(); 
+              if (error) throw error;
+              if (data) { 
+                onSuccess({ role: "kasir", name: data.cashier_name, session_id: data.id, cashier_id: data.cashier_id, session_opened_at: data.created_at, opened_by: data.opened_by }); 
+              } else { 
+                onSuccess({ role: "kasir", name: "Kasir", needs_open: true }); 
+              } 
+            } catch (e) { 
+              console.error(e);
+              notify("Error cek sesi: " + e.message);
+            } 
+            setLoading(false); 
+            return; 
+          }
           if (next.length >= 6) { setShake(true); setTimeout(() => { setPin(""); setShake(false); }, 600); }
         }
       };
@@ -141,7 +157,8 @@
           <div className="text-5xl mb-3">🧾</div>
           <div className="text-white font-extrabold text-2xl mb-1">Kasir POS</div>
           <div className="text-white/60 text-sm mb-8 font-medium">{settings?.store_name || "Toko Azzahro"}</div>
-          <div className={`bg-white rounded-3xl p-7 w-full max-w-[320px] shadow-2xl ${shake ? 'animate-shake' : ''}`}>
+          <div className={`bg-white rounded-3xl p-7 w-full max-w-[320px] shadow-2xl relative ${shake ? 'animate-shake' : ''}`}>
+            {loading && <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 rounded-3xl flex items-center justify-center"><Spinner /></div>}
             <div className="flex justify-center gap-3 mb-6">
               {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className={`w-3.5 h-3.5 rounded-full transition-colors ${i < pin.length ? 'bg-dark' : 'bg-gray-200'}`} />)}
             </div>
@@ -160,16 +177,44 @@
     }
 
     function OpenSession({ onOpened, cashiers, notify }) {
-      const [form, setForm] = useState({ cashier_id: "", opening_amount: "", opened_by: "", notes: "" });
+      const [form, setForm] = useState({ cashier_id: "", opening_amount: "", notes: "" });
+      const [now, setNow] = useState(new Date());
+      useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
       const [saving, setSaving] = useState(false);
       const save = async () => {
-        if (!form.cashier_id || !form.opening_amount || !form.opened_by) return notify("Pilih kasir, PIC, dan uang awal!");
+        if (!form.cashier_id || !form.opening_amount) return notify("Pilih kasir dan isi uang awal!");
         setSaving(true);
-        const cashier = cashiers.find(c => c.id === form.cashier_id);
-        const payload = { cashier_id: cashier.id, cashier_name: cashier.name, opened_by: form.opened_by, opening_amount: parseFloat(form.opening_amount), status: "open", notes_open: form.notes };
-        const { data, error } = await db.from("cash_sessions").insert(payload).select().single();
-        setSaving(false); if (error) return notify("Gagal: " + error.message);
-        notify("Sesi kasir dimulai!"); onOpened(data);
+        try {
+          const cashier = cashiers.find(c => String(c.id) === String(form.cashier_id));
+          if (!cashier) throw new Error("Kasir tidak ditemukan.");
+          
+          const now = new Date();
+          const sessId = now.getFullYear() + 
+                         String(now.getMonth() + 1).padStart(2, '0') + 
+                         String(now.getDate()).padStart(2, '0') + 
+                         String(now.getHours()).padStart(2, '0') + 
+                         String(now.getMinutes()).padStart(2, '0');
+          
+          const payload = { 
+            cashier_id: cashier.id, 
+            cashier_name: sessId, 
+            opened_by: cashier.name, 
+            opening_amount: parseFloat(form.opening_amount), 
+            status: "open", 
+            notes_open: form.notes 
+          };
+          
+          const { data, error } = await db.from("cash_sessions").insert(payload).select().single();
+          if (error) throw error;
+          
+          notify("Sesi kasir dimulai!"); 
+          onOpened(data);
+        } catch (e) {
+          console.error(e);
+          notify("Gagal: " + e.message);
+        } finally {
+          setSaving(false);
+        }
       };
       return (
         <div className="min-h-screen bg-grayLight flex items-center justify-center p-4">
@@ -177,19 +222,20 @@
             <h2 className="text-xl font-black text-gray-800 mb-1">▶ Mulai Sesi Kasir</h2>
             <p className="text-sm text-gray-500 mb-6 font-medium">Isi detail awal sebelum mulai melayani pelanggan.</p>
             <div className="space-y-4">
+              <div className="bg-brandLight p-4 rounded-2xl border border-brand/10 text-center">
+                <div className="text-[10px] text-brand/60 font-black uppercase tracking-widest mb-1">Waktu Saat Ini</div>
+                <div className="text-2xl font-black text-brand leading-none">{now.toLocaleTimeString("id-ID", { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
+                <div className="text-[10px] text-brand/60 font-bold mt-1 uppercase tracking-wider">{now.toLocaleDateString("id-ID", { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+              </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Pilih Akun Kasir *</label>
-                <select value={form.cashier_id} onChange={e => setForm(f => ({ ...f, cashier_id: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
-                  <option value="">-- Pilih --</option>{cashiers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Identitas Kasir *</label>
+                <select value={form.cashier_id} onChange={e => setForm(f => ({ ...f, cashier_id: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <option value="">-- Pilih Nama Kasir --</option>{cashiers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">PIC Pendaftar *</label>
-                <input value={form.opened_by} onChange={e => setForm(f => ({ ...f, opened_by: e.target.value }))} placeholder="Nama admin/owner yg mengizinkan" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>
-              <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Uang Modal Awal (Laci) *</label>
-                <input value={form.opening_amount} onChange={e => setForm(f => ({ ...f, opening_amount: e.target.value }))} type="number" placeholder="cth: 500000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xl font-bold focus:outline-none focus:ring-2 focus:ring-brand/30 text-brand" />
+                <input value={form.opening_amount} onChange={e => setForm(f => ({ ...f, opening_amount: e.target.value }))} type="number" inputMode="numeric" placeholder="cth: 500000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xl font-bold focus:outline-none focus:ring-2 focus:ring-brand/30 text-brand" />
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Catatan</label>
@@ -239,14 +285,281 @@
       );
     }
 
+    function LaporanPanel({ sessionTxs, loadSessionTxs, user, setTxData, setModal, fmt, db, color, settings, customers }) {
+      const today = new Date().toISOString().split('T')[0];
+      const [dateFilter, setDateFilter] = useState(today);
+      const [txList, setTxList] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [tab, setTab] = useState('tx'); // 'tx' or 'items'
+
+      const load = async () => {
+        setLoading(true);
+        const start = dateFilter + 'T00:00:00';
+        const end = dateFilter + 'T23:59:59';
+        const { data } = await db.from('transactions').select('*, transaction_items(*)').gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false });
+        setTxList(data || []);
+        setLoading(false);
+      };
+
+      useEffect(() => { load(); }, []);
+
+      const list = txList !== null ? txList : sessionTxs;
+      const totalAll = list.reduce((s, t) => s + (t.total || 0), 0);
+      const totalCash = list.filter(t => t.pay_method === 'Cash').reduce((s, t) => s + (t.total || 0), 0);
+      const totalNonCash = totalAll - totalCash;
+
+      const soldSummary = {};
+      list.forEach(t => {
+        (t.transaction_items || []).forEach(i => {
+          const key = `${i.name}${i.variant_name ? ` (${i.variant_name})` : ''}`;
+          if (!soldSummary[key]) soldSummary[key] = { name: i.name, variant: i.variant_name, qty: 0, total: 0 };
+          soldSummary[key].qty += i.qty;
+          soldSummary[key].total += (i.qty * i.price);
+        });
+      });
+      const soldList = Object.values(soldSummary).sort((a, b) => b.qty - a.qty);
+
+      const shareWA = (t) => {
+        const items = (t.transaction_items || []).map(i => `${i.name}${i.variant_name ? ` (${i.variant_name})` : ''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
+        const text = `*${(settings?.store_name || 'Toko Azzahro').toUpperCase()}*\n\nNo: ${t.tx_code}\nKasir: ${t.cashier_name}\nTgl: ${new Date(t.created_at).toLocaleDateString('id-ID')}\n\n--- ITEM ---\n${items}\n\nTotal: ${fmt(t.total)}\nBayar: ${t.pay_method}\n\n${settings?.store_footer || 'Terima kasih!'}`;
+        const phone = t.customer_id ? customers.find(c => c.id === t.customer_id)?.phone : null;
+        window.open(`https://wa.me/${phone ? phone.replace(/[^0-9]/g, '') : ''}?text=${encodeURIComponent(text)}`);
+      };
+
+      return (
+        <div>
+          <div className="flex gap-2 mb-3">
+            <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30" />
+            <button onClick={load} disabled={loading} className="px-4 py-2 bg-brand text-white rounded-xl text-xs font-bold shadow-sm hover:bg-brand/90 transition-all">
+              {loading ? '...' : 'Lihat'}
+            </button>
+          </div>
+
+          <div className="flex bg-gray-100 p-1 rounded-xl mb-4">
+            <button onClick={() => setTab('tx')} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'tx' ? 'bg-white text-brand shadow-sm' : 'text-gray-400'}`}>📜 Transaksi</button>
+            <button onClick={() => setTab('items')} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'items' ? 'bg-white text-brand shadow-sm' : 'text-gray-400'}`}>📦 Barang</button>
+          </div>
+
+          {list.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="bg-brandLight rounded-xl p-3 border border-brand/10 text-center">
+                <div className="text-[9px] font-bold text-brand/60 uppercase tracking-widest">Transaksi</div>
+                <div className="font-black text-lg text-brand">{list.length}</div>
+              </div>
+              <div className="bg-green-50 rounded-xl p-3 border border-green-100 text-center">
+                <div className="text-[9px] font-bold text-green-600/70 uppercase tracking-widest">Cash</div>
+                <div className="font-black text-sm text-green-700">{fmt(totalCash)}</div>
+              </div>
+              <div className="bg-blue-50 rounded-xl p-3 border border-blue-100 text-center">
+                <div className="text-[9px] font-bold text-blue-600/70 uppercase tracking-widest">Non-Cash</div>
+                <div className="font-black text-sm text-blue-700">{fmt(totalNonCash)}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+            {loading ? (
+              <div className="flex justify-center py-6">
+                <div className="w-6 h-6 border-4 border-gray-200 border-t-brand rounded-full animate-spin"></div>
+              </div>
+            ) : list.length === 0 ? (
+              <div className="text-center text-gray-400 py-8 italic text-sm">Tidak ada data pada tanggal ini</div>
+            ) : tab === 'tx' ? (
+              list.map(t => (
+                <div key={t.id} className="p-3 bg-white border border-gray-100 rounded-xl shadow-sm hover:border-brand/30 transition-all">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-[10px] font-mono text-gray-400 uppercase tracking-wider">#{t.tx_code || t.id}</div>
+                      <div className="font-bold text-gray-800 text-xs">{t.customer_name || 'Umum'}</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{t.cashier_name} · {new Date(t.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-black text-sm" style={{ color }}>{fmt(t.total)}</div>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.pay_method === 'Cash' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{t.pay_method}</span>
+                    </div>
+                  </div>
+                  {(t.transaction_items || []).length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-50 text-[10px] text-gray-500 space-y-0.5">
+                      {t.transaction_items.map((i, idx) => (
+                        <div key={idx} className="flex justify-between"><span>{i.name}{i.variant_name ? ` (${i.variant_name})` : ''}</span><span>{i.qty}x</span></div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-1.5 mt-2">
+                    <button onClick={() => { setTxData({ ...t, items: t.transaction_items || [] }); setModal('receipt'); }} className="flex-1 py-1.5 bg-gray-50 text-gray-600 rounded-lg border border-gray-200 text-[10px] font-bold flex items-center justify-center gap-1">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                      Struk
+                    </button>
+                    <button onClick={() => shareWA(t)} className="flex-1 py-1.5 bg-green-50 text-green-700 rounded-lg border border-green-100 text-[10px] font-bold flex items-center justify-center gap-1">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                      WA
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="px-3 py-2 text-[9px] font-black uppercase text-gray-400">Barang</th>
+                      <th className="px-3 py-2 text-[9px] font-black uppercase text-gray-400 text-center">Qty</th>
+                      <th className="px-3 py-2 text-[9px] font-black uppercase text-gray-400 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {soldList.map((i, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-3 py-2.5">
+                          <div className="font-bold text-gray-800 text-[11px] leading-tight">{i.name}</div>
+                          {i.variant && <div className="text-[9px] text-gray-400">{i.variant}</div>}
+                        </td>
+                        <td className="px-3 py-2.5 text-center font-black text-gray-700 text-xs">{i.qty}</td>
+                        <td className="px-3 py-2.5 text-right font-bold text-brand text-xs">{fmt(i.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 font-black border-t border-gray-100">
+                    <tr>
+                      <td className="px-3 py-2 text-[10px] uppercase text-gray-500">Total</td>
+                      <td className="px-3 py-2 text-center text-xs">{soldList.reduce((s,i)=>s+i.qty, 0)}</td>
+                      <td className="px-3 py-2 text-right text-xs" style={{ color }}>{fmt(soldList.reduce((s,i)=>s+i.total, 0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function CloseSessionForm({ modal, onSubmit, fmt, color, cashiers }) {
+      const [actCash, setActCash] = useState("");
+      const [notes, setNotes] = useState("");
+      const [cashierName, setCashierName] = useState(modal.openedBy || "");
+      const [duration, setDuration] = useState("");
+
+      useEffect(() => {
+        if (!modal.sessionStart) return;
+        const calc = () => {
+          const start = new Date(modal.sessionStart);
+          const diff = Math.floor((Date.now() - start.getTime()) / 1000);
+          const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60), s = diff % 60;
+          setDuration(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
+        };
+        calc();
+        const t = setInterval(calc, 1000);
+        return () => clearInterval(t);
+      }, [modal.sessionStart]);
+
+      const diff = actCash !== "" ? parseFloat(actCash) - modal.expCash : null;
+      const diffColor = diff === null ? "" : diff === 0 ? "text-green-600" : diff > 0 ? "text-blue-600" : "text-red-600";
+      const diffBg = diff === null ? "bg-white/50 border-brand/5" : diff === 0 ? "bg-green-50 border-green-100" : diff > 0 ? "bg-blue-50 border-blue-100" : "bg-red-50 border-red-100";
+      const diffLabel = diff === null ? "—" : diff === 0 ? "✓ Pas!" : diff > 0 ? `+${fmt(diff)} (Lebih)` : `${fmt(diff)} (Kurang)`;
+
+      return (
+        <div className="space-y-4">
+          <div className="bg-brandLight rounded-2xl p-4 border border-brand/20 shadow-sm space-y-4">
+            <div className="text-[10px] font-black text-brand uppercase tracking-widest text-center border-b border-brand/10 pb-2">Rangkuman Sesi</div>
+            
+            <div className="space-y-2">
+              <div className="flex justify-between items-start text-[10px]">
+                <span className="text-gray-500 font-bold uppercase tracking-tighter">Sesi / Durasi</span>
+                <span className="font-mono font-black text-gray-800 text-right">{modal.cashier} · <span className="text-brand">{duration || '--:--:--'}</span></span>
+              </div>
+              <div className="flex justify-between items-start text-[10px]">
+                <span className="text-gray-500 font-bold uppercase tracking-tighter">Kasir Terlibat</span>
+                <span className="font-bold text-gray-800 text-right max-w-[140px] leading-tight">{modal.involvedCashiers || '-'}</span>
+              </div>
+            </div>
+
+            <div className="overflow-hidden border border-brand/10 rounded-xl shadow-sm">
+              <table className="w-full text-[10px] text-left border-collapse">
+                <thead className="bg-brand/5">
+                  <tr>
+                    <th className="px-2 py-1.5 font-bold text-brand uppercase tracking-wider">Jenis</th>
+                    <th className="px-2 py-1.5 font-bold text-brand uppercase tracking-wider text-center">Tx</th>
+                    <th className="px-2 py-1.5 font-bold text-brand uppercase tracking-wider text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand/5 bg-white">
+                  <tr>
+                    <td className="px-2 py-1.5 font-medium text-gray-600">Tunai (Cash)</td>
+                    <td className="px-2 py-1.5 text-center font-bold text-gray-800">{modal.cashCount}</td>
+                    <td className="px-2 py-1.5 text-right font-bold text-gray-800">{fmt(modal.cashIn)}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-2 py-1.5 font-medium text-gray-600">QRIS</td>
+                    <td className="px-2 py-1.5 text-center font-bold text-gray-800">{modal.qrisCount}</td>
+                    <td className="px-2 py-1.5 text-right font-bold text-gray-800">{fmt(modal.qrisIn)}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-2 py-1.5 font-medium text-gray-600">Transfer</td>
+                    <td className="px-2 py-1.5 text-center font-bold text-gray-800">{modal.transferCount}</td>
+                    <td className="px-2 py-1.5 text-right font-bold text-gray-800">{fmt(modal.transferIn)}</td>
+                  </tr>
+                </tbody>
+                <tfoot className="bg-brand/5 font-black">
+                  <tr>
+                    <td className="px-2 py-1.5 text-brand uppercase">Total</td>
+                    <td className="px-2 py-1.5 text-center text-brand">{modal.txCount}</td>
+                    <td className="px-2 py-1.5 text-right text-brand">{fmt(modal.rev)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div className="pt-2 space-y-2">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="text-gray-800 font-bold uppercase tracking-tight">Ekspektasi Kas (Tunai)</span>
+                <span className="font-black text-gray-800">{fmt(modal.expCash)}</span>
+              </div>
+              {actCash !== "" && (
+                <div className={`flex justify-between items-center p-2.5 rounded-xl border ${diffBg} transition-all`}>
+                  <span className="text-[10px] font-bold text-gray-600 uppercase">Selisih Aktual</span>
+                  <span className={`font-black text-sm ${diffColor}`}>{diffLabel}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3 px-1">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Kasir Penutup</label>
+                <select value={cashierName} onChange={e => setCashierName(e.target.value)} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  {cashiers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Uang Aktual *</label>
+                <input value={actCash} onChange={e => setActCash(e.target.value)} type="number" inputMode="numeric" required placeholder="0" className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-brand/30 text-brand" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Catatan</label>
+              <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Opsional..." className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand/30" />
+            </div>
+            <button onClick={() => { if (!actCash) return; onSubmit(actCash, notes, cashierName); }} disabled={!actCash} className="w-full py-3.5 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-sm shadow-md transition-all disabled:opacity-40">
+              Konfirmasi & Tutup Sesi
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     function POS({ user, settings, notify, onLogout }) {
+
       const [products, setProducts] = useState([]);
       const [promos, setPromos] = useState([]);
       const [customers, setCustomers] = useState([]);
+      const [cashiers, setCashiers] = useState([]);
       const [cart, setCart] = useState([]);
       const [cat, setCat] = useState("Semua");
       const [search, setSearch] = useState("");
       const [customer, setCustomer] = useState("");
+      const [servedBy, setServedBy] = useState("");
       const [txType, setTxType] = useState("Cash");
       const [cash, setCash] = useState("");
       const [modal, setModal] = useState(null);
@@ -254,40 +567,75 @@
       const [variantPicker, setVariantPicker] = useState(null);
       const [showAddCustomer, setShowAddCustomer] = useState(false);
       const [loading, setLoading] = useState(true);
+      const [showCart, setShowCart] = useState(false);
+      const [paymentStatus, setPaymentStatus] = useState("Completed");
+      const [sessionTxs, setSessionTxs] = useState([]);
+      const [showSessionTxs, setShowSessionTxs] = useState(false);
+      const CATS = settings?.product_categories ? ["Semua", ...settings.product_categories.split(",").map(c => c.trim()).filter(Boolean)] : CATS_DEFAULT;
 
       const loadAll = useCallback(async () => {
         setLoading(true);
-        const [p, pr, c] = await Promise.all([
+        const [p, pr, c, cashiersRes] = await Promise.all([
           db.from("products").select("*").eq("active", true).order("name"),
           db.from("promos").select("*").eq("active", true),
-          db.from("customers").select("*").order("name")
+          db.from("customers").select("*").order("name"),
+          db.from("cashiers").select("*").order("name")
         ]);
-        setProducts(p.data || []); setPromos(pr.data || []); setCustomers(c.data || []);
+        setProducts(p.data || []); setPromos(pr.data || []); setCustomers(c.data || []); setCashiers(cashiersRes.data || []);
         setLoading(false);
       }, []);
-      useEffect(() => { loadAll(); }, [loadAll]);
+      
+      const loadSessionTxs = async () => {
+        if (!user?.session_id) return;
+        const { data } = await db.from("transactions").select("*").eq("session_id", user.session_id).order("created_at", { ascending: false });
+        setSessionTxs(data || []);
+      };
+      
+      useEffect(() => { loadAll(); loadSessionTxs(); }, [loadAll]);
+
+      const grouped = useMemo(() => {
+        const map = {};
+        products.forEach(p => {
+          if (!p.sku) return;
+          const key = p.sku.split('-')[0];
+          const isVariant = p.sku.includes('-');
+          if (!map[key]) {
+            map[key] = { ...p, variants: [] };
+          }
+          if (isVariant) {
+            map[key].variants.push(p);
+          } else {
+            const vars = map[key].variants;
+            map[key] = { ...p, variants: vars };
+          }
+        });
+        return Object.values(map);
+      }, [products]);
 
       const filtered = useMemo(() => {
         const s = search.toLowerCase();
-        return products.filter(p => (cat === "Semua" || p.category === cat) && (p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s) || (p.brand || "").toLowerCase().includes(s)));
-      }, [products, search, cat]);
+        return grouped.filter(p => (cat === "Semua" || p.category === cat) && (p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s) || (p.brand || "").toLowerCase().includes(s)));
+      }, [grouped, search, cat]);
 
-      const addFinal = (p, v = null) => {
-        if ((p.stock || 0) <= 0) return notify("Stok habis!");
-        const ckey = v ? `${p.id}_${v.name}` : String(p.id);
-        const price = v ? v.price : p.price;
-        const name = p.name;
-        const vName = v ? v.name : null;
-        const itemStock = p.stock || 0;
+      const addFinal = (item) => {
+        if ((item.stock || 0) <= 0) return notify("Stok habis!");
+        const ckey = item.sku;
+        const price = item.price;
+        const name = item.name;
+        const vName = item.variant_name || null;
+        const itemStock = item.stock || 0;
         setCart(prev => {
           const ex = prev.find(x => x.ckey === ckey);
           const currQty = ex ? ex.qty : 0;
           if (currQty + 1 > itemStock) { notify(`Stok ${name} sisa ${itemStock}`); return prev; }
-          return ex ? prev.map(x => x.ckey === ckey ? { ...x, qty: x.qty + 1 } : x) : [...prev, { id: p.id, sku: p.sku, name, vName, price, qty: 1, ckey, stock: itemStock }];
+          return ex ? prev.map(x => x.ckey === ckey ? { ...x, qty: x.qty + 1 } : x) : [...prev, { id: item.id, sku: item.sku, name, vName, price, qty: 1, ckey, stock: itemStock }];
         });
         setVariantPicker(null);
       };
-      const clickProd = p => { if ((p.stock || 0) <= 0) return notify("Habis"); if (p.variants?.length > 0) setVariantPicker(p); else addFinal(p); };
+      const clickProd = p => { 
+        if (p.variants?.length > 0) setVariantPicker(p); 
+        else addFinal(p); 
+      };
       const updQty = (ckey, d) => {
         setCart(prev => prev.map(x => {
           if (x.ckey === ckey) { const n = x.qty + d; return { ...x, qty: n > x.stock ? x.stock : n < 0 ? 0 : n }; }
@@ -305,54 +653,144 @@
         if (txType === "Cash" && parseFloat(cash) < total) return notify("Uang kurang!");
         setModal("loading");
 
-        const cust = customers.find(c => c.id === customer);
+        const now = new Date();
+        const dateCode = now.getFullYear().toString().slice(-2) + 
+                         String(now.getMonth() + 1).padStart(2, '0') + 
+                         String(now.getDate()).padStart(2, '0');
+        const timeCode = String(now.getHours()).padStart(2, '0') + 
+                         String(now.getMinutes()).padStart(2, '0') + 
+                         String(now.getSeconds()).padStart(2, '0');
+        const txCode = `TX${dateCode}${timeCode}`;
+
+        const cust = customers.find(c => String(c.id) === String(customer));
+        const servedName = servedBy || user.name;
         const payload = {
-          session_id: user.session_id, cashier_id: user.cashier_id, cashier_name: user.name,
+          session_id: user.session_id, cashier_id: user.cashier_id, cashier_name: servedName,
           customer_id: cust?.id || null, customer_name: cust?.name || null,
           subtotal, discount_total: discountTotal, total,
           pay_method: txType, cash_received: txType === "Cash" ? parseFloat(cash) : total,
           change_amount: txType === "Cash" ? parseFloat(cash) - total : 0,
-          applied_promos: appliedPromos
+          applied_promos: appliedPromos,
+          tx_code: txCode
         };
 
         const { data: tx, error: err1 } = await db.from("transactions").insert(payload).select().single();
         if (err1) { setModal(null); return notify("Gagal simpan: " + err1.message); }
+
+        // Simpan served_by terpisah (toleran jika kolom belum ada di DB)
+        const servedByVal = servedBy || user.name;
+        try { await db.from("transactions").update({ served_by: servedByVal }).eq("id", tx.id); } catch(_) {}
 
         const items = cart.map(x => ({ transaction_id: tx.id, product_id: x.id, sku: x.sku, name: x.name, variant_name: x.vName, price: x.price, qty: x.qty, subtotal: x.price * x.qty }));
         await db.from("transaction_items").insert(items);
 
         // Update stok
         for (const item of cart) {
-          if (item.vName) {
-            await db.rpc("decrement_variant_stock", { p_id: item.id, v_name: item.vName, p_qty: item.qty });
-          } else {
-            await db.rpc("decrement_stock", { p_id: item.id, p_qty: item.qty });
-          }
+          await db.rpc("decrement_stock_by_sku", { p_sku: item.sku, p_qty: item.qty });
         }
 
         setTxData({ ...tx, items });
-        setCart([]); setCash(""); setCustomer(""); setTxType("Cash");
+        setCart([]); setCash(""); setCustomer(""); setTxType("Cash"); setServedBy("");
         loadAll();
+        loadSessionTxs();
         setModal("receipt");
       };
 
       const closeSession = async () => {
-        setModal("loading");
-        const { data: txs } = await db.from("transactions").select("*").eq("session_id", user.session_id);
-        const rev = txs.reduce((s, t) => s + t.total, 0);
-        const cashIn = txs.filter(t => t.pay_method === "Cash").reduce((s, t) => s + t.total, 0);
-        const nonCash = rev - cashIn;
-        const { data: sess } = await db.from("cash_sessions").select("opening_amount").eq("id", user.session_id).single();
-        const expCash = (sess?.opening_amount || 0) + cashIn;
-        setModal({ type: "closeSess", rev, cashIn, nonCash, expCash });
+        try {
+          let sid = user.session_id;
+          if (!sid) {
+            // Jika admin/owner, cari sesi yang sedang open
+            const { data } = await db.from("cash_sessions").select("id").eq("status", "open").single();
+            if (data) sid = data.id;
+          }
+          if (!sid) throw new Error("Tidak ada sesi kasir yang sedang aktif.");
+          
+          setModal("loading");
+          const { data: txs, error: txError } = await db.from("transactions").select("*").eq("session_id", sid);
+          if (txError) throw txError;
+          const safeTxs = txs || [];
+          const rev = safeTxs.reduce((s, t) => s + t.total, 0);
+          const cashIn = safeTxs.filter(t => t.pay_method === "Cash").reduce((s, t) => s + t.total, 0);
+          const qrisIn = safeTxs.filter(t => t.pay_method === "QRIS").reduce((s, t) => s + t.total, 0);
+          const transferIn = safeTxs.filter(t => t.pay_method === "Transfer Bank").reduce((s, t) => s + t.total, 0);
+          const cashCount = safeTxs.filter(t => t.pay_method === "Cash").length;
+          const qrisCount = safeTxs.filter(t => t.pay_method === "QRIS").length;
+          const transferCount = safeTxs.filter(t => t.pay_method === "Transfer Bank").length;
+          const txCount = safeTxs.length;
+          const nonCash = rev - cashIn;
+
+          // Ambil semua kasir yang terlibat
+          const involved = new Set();
+          safeTxs.forEach(t => {
+            if (t.cashier_name) involved.add(t.cashier_name);
+            if (t.served_by) involved.add(t.served_by);
+          });
+          const involvedCashiers = Array.from(involved).join(", ");
+
+          const { data: sess, error: sessError } = await db.from("cash_sessions").select("*").eq("id", sid).single();
+          if (sessError && sessError.code !== "PGRST116") throw sessError;
+          const openAmt = sess?.opening_amount || 0;
+          const expCash = openAmt + cashIn;
+          setModal({ type: "closeSess", sid, rev, cashIn, qrisIn, transferIn, qrisCount, transferCount, nonCash, expCash, openAmt, txCount, cashCount, cashier: sess?.cashier_name || "Kasir", sessionStart: sess?.created_at, involvedCashiers, openedBy: sess?.opened_by });
+        } catch (e) {
+          console.error(e);
+          notify("Gagal: " + e.message);
+          setModal(null);
+        }
       };
-      const confirmClose = async (actCash, notes) => {
-        setModal("loading");
-        const diff = actCash - modal.expCash;
-        const summary = { total_transactions: modal.txCount || 0, total_revenue: modal.rev, total_cash: modal.cashIn, total_non_cash: modal.nonCash, expected_cash: modal.expCash, closing_amount: actCash, difference: diff };
-        await db.from("cash_sessions").update({ status: "closed", closed_at: new Date(), closing_amount: actCash, summary, notes_close: notes }).eq("id", user.session_id);
-        notify("Sesi ditutup!"); onLogout();
+      const confirmClose = async (actCash, notes, closingCashier) => {
+        const prevModal = { ...modal };
+        try {
+          setModal("loading");
+          const actCashNum = parseFloat(actCash) || 0;
+          const diff = actCashNum - modal.expCash;
+          const summary = { 
+            total_transactions: modal.txCount || 0, 
+            total_revenue: modal.rev, 
+            total_cash: modal.cashIn, 
+            total_qris: modal.qrisIn,
+            total_transfer: modal.transferIn,
+            total_cash_count: modal.cashCount,
+            total_qris_count: modal.qrisCount,
+            total_transfer_count: modal.transferCount,
+            total_non_cash: modal.nonCash, 
+            expected_cash: modal.expCash, 
+            closing_amount: actCashNum, 
+            difference: diff,
+            closing_cashier: closingCashier || modal.cashier,
+            involved_cashiers: modal.involvedCashiers
+          };
+          const { error } = await db.from("cash_sessions").update({ 
+            status: "closed", 
+            closed_at: new Date(), 
+            closing_amount: actCashNum, 
+            summary, 
+            notes_close: notes 
+          }).eq("id", modal.sid);
+          if (error) throw error;
+          notify("Sesi ditutup!"); onLogout();
+        } catch (e) {
+          console.error(e);
+          notify("Gagal menutup sesi: " + e.message);
+          setModal(prevModal);
+        }
       };
+
+      const [sessionDuration, setSessionDuration] = useState("");
+      useEffect(() => {
+        if (!user?.session_id) return;
+        const calc = () => {
+          const startStr = user.session_opened_at || user.created_at;
+          const start = startStr ? new Date(startStr) : new Date();
+          const diff = Math.floor((Date.now() - start.getTime()) / 1000);
+          const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60), s = diff % 60;
+          setSessionDuration(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
+        };
+        calc();
+        const t = setInterval(calc, 1000);
+        return () => clearInterval(t);
+      }, [user?.session_id]);
 
       const color = settings?.receipt_color || "#114232";
 
@@ -363,22 +801,39 @@
       };
 
       return (
-        <div className="h-screen flex bg-gray-100 overflow-hidden text-sm">
+        <div className="h-screen flex flex-col md:flex-row bg-gray-100 overflow-hidden text-sm relative">
           {/* KIRI - Produk */}
-          <div className="flex-[3] flex flex-col bg-white">
+          <div className={`flex-[3] flex flex-col bg-white h-full ${showCart ? 'hidden md:flex' : 'flex'}`}>
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white z-10 shadow-sm relative">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>P</div>
                 <div>
                   <div className="font-extrabold text-gray-800 text-lg leading-tight tracking-tight">Kasir POS</div>
-                  <div className="text-[11px] text-gray-500 font-medium">Sesi: <span className="font-bold text-gray-700">{user.name}</span></div>
+                  {sessionDuration && (
+                    <div className="text-[11px] text-gray-500 font-medium flex items-center gap-2">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                      <span className="bg-brand/10 text-brand font-mono font-bold px-2 py-0.5 rounded-full text-[10px]">{sessionDuration}</span>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2">
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ketik nama / SKU..." className="pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 w-64 transition-all" style={{ '--tw-ring-color': color }} />
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari..." className="pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 w-full md:w-64 transition-all" style={{ '--tw-ring-color': color }} />
                 </div>
+                <button onClick={() => { loadSessionTxs(); setShowSessionTxs(true); }} className="relative p-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold border border-gray-200 hover:bg-gray-200 transition-all flex items-center gap-1.5 text-xs" title="Laporan Sesi">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+                  <span className="hidden sm:inline">Laporan</span>
+                  {sessionTxs.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-brand text-white text-[8px] font-black rounded-full flex items-center justify-center">{sessionTxs.length}</span>}
+                </button>
+                <button onClick={closeSession} className="flex p-2.5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-xl font-bold border border-red-100 transition-all items-center gap-1.5 text-xs" title="Tutup Sesi">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                  <span className="hidden sm:inline">Tutup Sesi</span>
+                </button>
+                <button onClick={onLogout} className="md:hidden p-2 bg-red-50 text-red-500 rounded-xl font-bold">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                </button>
               </div>
             </div>
 
@@ -407,11 +862,19 @@
           </div>
 
           {/* KANAN - Keranjang */}
-          <div className="flex-[1.5] lg:flex-1 bg-white border-l border-gray-200 flex flex-col shadow-[-4px_0_20px_rgba(0,0,0,0.03)] z-20">
+          <div className={`flex-[1.5] lg:flex-1 bg-white border-l border-gray-200 flex flex-col shadow-[-4px_0_20px_rgba(0,0,0,0.03)] z-[100] ${showCart ? 'fixed inset-0' : 'hidden md:flex'}`}>
             <div className="p-4 border-b border-gray-100 bg-gray-50">
-              <div className="flex justify-between items-center mb-3">
-                <h2 className="font-extrabold text-gray-800 uppercase tracking-wider text-sm flex items-center gap-2"><span className="text-xl">🛒</span> Keranjang</h2>
-                <button onClick={() => setCart([])} disabled={cart.length === 0} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:hover:bg-transparent">Kosongkan</button>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowCart(false)} className="md:hidden p-2 bg-white border border-gray-200 rounded-xl mr-1 font-bold flex items-center justify-center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5M5 12l7-7M5 12l7 7"/></svg>
+                  </button>
+                  <h2 className="font-extrabold text-gray-800 uppercase tracking-wider text-sm flex items-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+                    Keranjang
+                  </h2>
+                </div>
+                <button onClick={() => setCart([])} disabled={cart.length === 0} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded-lg transition-colors disabled:opacity-30">Hapus Semua</button>
               </div>
               <div className="flex gap-2">
                 <select value={customer} onChange={e => setCustomer(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30 shadow-sm text-gray-700">
@@ -422,10 +885,16 @@
                   <span>+</span> Baru
                 </button>
               </div>
+              <div className="flex gap-2 mt-2">
+                <select value={servedBy} onChange={e => setServedBy(e.target.value)} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30 shadow-sm text-gray-700">
+                  <option value="">-- Melayani: {user.name} --</option>
+                  {cashiers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-grayLight">
-              {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60"><span className="text-6xl mb-4">🛍️</span><p className="font-medium">Belum ada pesanan</p></div> :
+              {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60"><svg className="mb-4 opacity-50" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg><p className="font-medium">Belum ada pesanan</p></div> :
                 cart.map(x => <div key={x.ckey} className="bg-white rounded-xl p-3 border border-gray-100 shadow-sm relative overflow-hidden group">
                   <div className="flex justify-between items-start mb-2">
                     <div className="pr-6">
@@ -447,7 +916,7 @@
 
             <div className="p-4 bg-white border-t border-gray-100 shadow-[0_-10px_20px_rgba(0,0,0,0.02)] z-10 relative">
               {appliedPromos.length > 0 && <div className="bg-green-50 rounded-xl p-2 mb-3 border border-green-100/50">
-                {appliedPromos.map((p, i) => <div key={i} className="flex justify-between text-[10px] font-bold text-green-700"><span>🏷️ {p.name}</span><span>-{fmt(p.discount)}</span></div>)}
+                {appliedPromos.map((p, i) => <div key={i} className="flex justify-between text-[10px] font-bold text-green-700"><span className="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>{p.name}</span><span>-{fmt(p.discount)}</span></div>)}
               </div>}
               <div className="flex justify-between items-center mb-1">
                 <span className="text-xs font-semibold text-gray-500">Subtotal</span><span className="font-bold text-gray-800 text-sm">{fmt(subtotal)}</span>
@@ -465,13 +934,34 @@
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {[50000, 100000, total].map(n => <button key={n} onClick={() => setCash(n)} className="px-2.5 py-1.5 bg-brandLight text-brand rounded-lg text-xs font-bold border border-brand/20 hover:bg-brand hover:text-white transition-colors">{fmt(n)}</button>)}
                 </div>
-                <input value={cash} onChange={e => setCash(e.target.value)} type="number" placeholder="Nominal Uang Tunai" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 text-brand text-right shadow-inner" style={{ '--tw-ring-color': color }} />
+                <input value={cash} onChange={e => setCash(e.target.value)} type="number" inputMode="numeric" placeholder="Nominal Uang Tunai" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 text-brand text-right shadow-inner" style={{ '--tw-ring-color': color }} />
                 {parseFloat(cash) >= total && <div className="mt-2 flex justify-between bg-orange-50 text-orange-600 p-2.5 rounded-xl border border-orange-100 text-xs font-bold"><span>Kembalian:</span><span className="text-sm font-black">{fmt(parseFloat(cash) - total)}</span></div>}
               </div>}
-              <div className="flex gap-2">
-                <button onClick={closeSession} className="w-12 py-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl font-bold flex items-center justify-center border border-red-100 transition-colors" title="Tutup Sesi">⏏️</button>
-                <button onClick={processTx} disabled={cart.length === 0} className="flex-1 py-4 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">✓ Proses Bayar</button>
-              </div>
+              <button onClick={processTx} disabled={cart.length === 0} className="w-full py-4 bg-brand hover:bg-brand/90 text-white rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                Proses Pembayaran
+              </button>
+              {txData && (
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  <button onClick={() => window.print()} className="py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-all border border-gray-200 flex items-center justify-center gap-1">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Cetak
+                  </button>
+                  <button onClick={() => {
+                    const items = (txData.items||[]).map(i=>`${i.name}${i.variant_name?` (${i.variant_name})`:''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
+                    const text = `*${(settings?.store_name||'Toko Azzahro').toUpperCase()}*\nNo: ${txData.tx_code}\nKasir: ${txData.cashier_name}\nTgl: ${new Date().toLocaleDateString('id-ID')}\n\n${items}\n\nTotal: ${fmt(txData.total)}\nBayar: ${txData.pay_method}\n\n${settings?.store_footer||'Terima kasih!'}`;
+                    const phone = txData.customer_id ? customers.find(c=>c.id===txData.customer_id)?.phone : null;
+                    window.open(`https://wa.me/${phone?phone.replace(/[^0-9]/g,''):''}?text=${encodeURIComponent(text)}`);
+                  }} className="py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-1">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                    WA
+                  </button>
+                  <button onClick={async () => { try { await navigator.share({ title: 'Nota', text: `Nota #${txData.tx_code} - ${fmt(txData.total)}` }); } catch(e) {} }} className="py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-1">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    Bagikan
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -481,17 +971,11 @@
           {variantPicker && <Modal onClose={() => setVariantPicker(null)} title="Pilih Varian Produk">
             <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
               <img src={variantPicker.image_url || `https://placehold.co/80/1a6b3c/white?text=${variantPicker.name.slice(0, 2)}`} className="w-12 h-12 rounded-lg object-cover" onError={e => e.target.src = `https://placehold.co/80/1a6b3c/white?text=?`} />
-              <div><div className="font-bold text-gray-800 leading-tight">{variantPicker.name}</div><div className="text-xs text-gray-500 font-medium">Stok: {variantPicker.stock}</div></div>
+              <div><div className="font-bold text-gray-800 leading-tight">{variantPicker.name}</div><div className="text-xs text-gray-500 font-medium">Stok: {[variantPicker.stock, ...variantPicker.variants.map(v=>v.stock)].reduce((a,b)=>a+b,0)}</div></div>
             </div>
             <div className="grid grid-cols-1 gap-2">
-              {(!variantPicker.variants || variantPicker.variants.length === 0) && (
-                <button onClick={() => addFinal(variantPicker)} className="text-left p-3 rounded-xl border-2 border-gray-100 hover:border-brand hover:bg-brandLight transition-all flex justify-between items-center group">
-                  <div><div className="font-bold text-gray-800 group-hover:text-brand">Tanpa Varian</div><div className="text-[10px] text-gray-500">Standar</div></div>
-                  <span className="font-black" style={{ color }}>{fmt(variantPicker.price)}</span>
-                </button>
-              )}
-              {(variantPicker.variants || []).map((v, i) => <button key={i} onClick={() => addFinal(variantPicker, v)} className="text-left p-3 rounded-xl border-2 border-gray-100 hover:border-brand hover:bg-brandLight transition-all flex justify-between items-center group">
-                <div><div className="font-bold text-gray-800 group-hover:text-brand">{v.name}</div>
+              {variantPicker.variants.map((v, i) => <button key={i} onClick={() => addFinal(v)} className="text-left p-3 rounded-xl border-2 border-gray-100 hover:border-brand hover:bg-brandLight transition-all flex justify-between items-center group">
+                <div><div className="font-bold text-gray-800 group-hover:text-brand">{v.variant_name}</div>
                 <div className="flex gap-2 items-center mt-0.5">
                   {v.sku && <div className="text-[10px] text-gray-400 font-mono">SKU: {v.sku}</div>}
                   <div className="text-[10px] text-gray-500 font-medium">Stok: {v.stock}</div>
@@ -502,10 +986,10 @@
           </Modal>}
 
           {modal === "receipt" && txData && <Modal onClose={() => setModal(null)} title="Transaksi Berhasil!">
-            <div className="bg-green-50 text-green-700 p-4 rounded-xl mb-4 text-center border border-green-200">
-              <div className="text-4xl mb-2">🎉</div>
-              <div className="font-black text-lg">Pembayaran Sukses</div>
-              <div className="text-xs font-semibold mt-1 font-mono uppercase bg-green-100 inline-block px-2 py-0.5 rounded text-green-800">#{txData.tx_code}</div>
+            <div className="bg-green-50 p-4 rounded-xl mb-4 text-center border border-green-200">
+              <div className="flex justify-center mb-2"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-5"/></svg></div>
+              <div className="font-black text-lg text-green-700">Pembayaran Berhasil</div>
+              <div className="text-xs font-semibold mt-1 font-mono uppercase bg-white/50 text-green-600 inline-block px-2 py-0.5 rounded border border-green-200">#{txData.tx_code}</div>
             </div>
             <div id="print-area" className="bg-white p-4 text-[10px] font-mono leading-relaxed border border-gray-200 shadow-sm mx-auto w-full max-w-[58mm]">
               {settings?.store_logo && <div className="text-center mb-1"><img src={settings.store_logo} className="h-6 mx-auto grayscale" onError={e => e.target.style.display = "none"} /></div>}
@@ -513,49 +997,60 @@
               <div className="text-center mb-2 leading-tight px-2">{settings?.store_address || "Alamat Toko"}</div>
               <div className="border-t border-dashed border-gray-400 py-1 space-y-0.5 flex flex-col items-center">
                 <div className="w-full flex justify-between"><span>Tgl:</span><span>{new Date().toLocaleDateString("id-ID")}</span></div>
-                <div className="w-full flex justify-between"><span>No:</span><span>{txData.tx_code}</span></div>
                 <div className="w-full flex justify-between"><span>Kasir:</span><span>{txData.cashier_name}</span></div>
                 {txData.customer_name && <div className="w-full flex justify-between"><span>Plg:</span><span className="truncate max-w-[80px] text-right">{txData.customer_name}</span></div>}
               </div>
               <div className="border-t border-dashed border-gray-400 py-1 space-y-1">
-                {txData.items.map(i => <div key={i.id}><div className="truncate">{i.name}{i.variant_name ? ` (${i.variant_name})` : ""}</div><div className="flex justify-between pl-2"><span>{i.qty} x {i.price}</span><span>{i.subtotal}</span></div></div>)}
+                {txData.items.map(i => <div key={i.id}><div className="truncate">{i.name}{i.variant_name ? ` (${i.variant_name})` : ""}</div><div className="flex justify-between pl-2"><span>{i.qty} x {fmt(i.price)}</span><span>{fmt(i.qty * i.price)}</span></div></div>)}
               </div>
               <div className="border-t border-dashed border-gray-400 py-1">
-                <div className="flex justify-between font-bold"><span>TOTAL</span><span>{txData.total}</span></div>
-                {txData.pay_method === "Cash" && <><div className="flex justify-between"><span>TUNAI</span><span>{txData.cash_received}</span></div><div className="flex justify-between"><span>KEMBALI</span><span>{txData.change_amount}</span></div></>}
-                {txData.pay_method !== "Cash" && <div className="flex justify-between"><span>METODE</span><span>{txData.pay_method}</span></div>}
+                <div className="flex justify-between font-bold"><span>TOTAL</span><span>{fmt(txData.total)}</span></div>
+                {txData.pay_method === "Cash" && <><div className="flex justify-between"><span>TUNAI</span><span>{fmt(txData.cash_received)}</span></div><div className="flex justify-between"><span>KEMBALI</span><span>{fmt(txData.change_amount)}</span></div></>}
               </div>
               <div className="text-center mt-3 pt-2 border-t border-gray-400">{settings?.store_footer || "Terima Kasih"}</div>
             </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => window.print()} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm transition-colors border border-gray-200">🖨️ Cetak Struk</button>
-              <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-colors">Selesai</button>
+            <div className="grid grid-cols-2 gap-2 mt-5">
+              <button onClick={() => window.print()} className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-xs transition-all border border-gray-200 flex items-center justify-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Cetak
+              </button>
+              <button onClick={() => {
+                const items = (txData.items||[]).map(i=>`${i.name}${i.variant_name?` (${i.variant_name})`:''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
+                const text = `*${(settings?.store_name||'Toko Azzahro').toUpperCase()}*\n${settings?.store_address||''}\n\nNo: ${txData.tx_code}\nKasir: ${txData.cashier_name}\nTgl: ${new Date().toLocaleDateString('id-ID')}\n\n--- ITEM ---\n${items}\n\nTotal: ${fmt(txData.total)}\nBayar: ${fmt(txData.cash_received)} (${txData.pay_method})\n${txData.change_amount>0?`Kembali: ${fmt(txData.change_amount)}`:''}\n\n${settings?.store_footer||'Terima kasih!'}`;
+                const phone = txData.customer_id ? customers.find(c=>c.id===txData.customer_id)?.phone : null;
+                window.open(`https://wa.me/${phone ? phone.replace(/[^0-9]/g,'') : ''}?text=${encodeURIComponent(text)}`);
+              }} className="py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                WhatsApp
+              </button>
+              <button onClick={async () => {
+                try { await navigator.share({ title: 'Nota Transaksi', text: `Nota #${txData.tx_code} - ${fmt(txData.total)}` }); } catch(e) {}
+              }} className="py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold text-xs shadow-md transition-all col-span-2 flex items-center justify-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                Bagikan Nota
+              </button>
+              <button onClick={() => setModal(null)} className="py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all col-span-2 mt-1">Selesai</button>
             </div>
           </Modal>}
 
-          {modal?.type === "closeSess" && <Modal onClose={() => setModal(null)} title="Tutup Sesi Kasir">
-            <div className="bg-brandLight rounded-2xl p-4 mb-4 border border-brand/20">
-              <div className="text-xs font-bold text-brand uppercase tracking-wider mb-2">Ringkasan Sesi</div>
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-sm"><span className="text-gray-600 font-medium">Total Omzet</span><span className="font-bold text-gray-800">{fmt(modal.rev)}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-600 font-medium">Non-Cash (QRIS/Trf)</span><span className="font-bold text-gray-800">{fmt(modal.nonCash)}</span></div>
-                <div className="flex justify-between text-sm border-t border-gray-200 pt-1.5 mt-1.5"><span className="text-gray-800 font-bold">Ekspektasi di Laci</span><span className="font-black" style={{ color }}>{fmt(modal.expCash)}</span></div>
-              </div>
-            </div>
-            <form onSubmit={e => { e.preventDefault(); confirmClose(e.target.act.value, e.target.notes.value); }} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Uang Aktual di Laci *</label>
-                <input name="act" type="number" required placeholder="Hitung uang fisik..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Catatan (Opsional)</label>
-                <input name="notes" placeholder="Penjelasan jika ada selisih..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>
-              <button type="submit" className="w-full py-4 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-sm shadow-md transition-all">Akhiri & Tutup Laci</button>
-            </form>
+          {showSessionTxs && <Modal onClose={() => setShowSessionTxs(false)} title={`Laporan Sesi: ${user.name} — ${user.opened_by}`}>
+            <LaporanPanel sessionTxs={sessionTxs} loadSessionTxs={loadSessionTxs} user={user} setTxData={setTxData} setModal={setModal} fmt={fmt} db={db} color={color} settings={settings} customers={customers} />
+          </Modal>}
+
+          {modal?.type === "closeSess" && <Modal onClose={() => setModal(null)} title={`Tutup Sesi: ${modal.cashier} — ${modal.openedBy}`}>
+            <CloseSessionForm modal={modal} onSubmit={confirmClose} fmt={fmt} color={color} cashiers={cashiers} />
           </Modal>}
 
           {modal === "loading" && <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[300] flex items-center justify-center"><Spinner /></div>}
+          
+          {/* Floating Cart Button Mobile */}
+          {!showCart && cart.length > 0 && (
+            <button onClick={() => setShowCart(true)} className="md:hidden fixed bottom-6 right-6 w-16 h-16 rounded-full text-white shadow-2xl flex flex-col items-center justify-center z-[150] animate-bounce active:scale-95 transition-transform" style={{ background: color }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+              <span className="text-[10px] font-bold mt-1">{fmt(total)}</span>
+              <span className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white shadow-sm">{cart.reduce((s,x)=>s+x.qty,0)}</span>
+            </button>
+          )}
         </div>
       );
     }
@@ -574,7 +1069,7 @@
       const notify = msg => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
       if (!user) return <><PinPad onSuccess={setUser} cashiers={cashiers} settings={settings} /><Toast msg={toast} /></>;
-      if (user.needs_open) return <><OpenSession cashiers={cashiers} onOpened={s => setUser({ ...user, needs_open: false, session_id: s.id })} notify={notify} /><Toast msg={toast} /></>;
+      if (user.needs_open) return <><OpenSession cashiers={cashiers} onOpened={s => setUser({ ...user, needs_open: false, session_id: s.id, cashier_id: s.cashier_id, session_opened_at: s.created_at, name: s.cashier_name, opened_by: s.opened_by })} notify={notify} /><Toast msg={toast} /></>;
       return <><POS user={user} settings={settings} notify={notify} onLogout={() => setUser(null)} /><Toast msg={toast} /></>;
     }
 

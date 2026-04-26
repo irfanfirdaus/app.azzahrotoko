@@ -42,13 +42,13 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXd4dGFrbHVlbXZlcmtnd3J2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1MjEzNTQsImV4cCI6MjA5MjA5NzM1NH0.XaP6ad5rvhA8EMlCSGy6FIoNltBMiDwQ4fLxe9BwVy8";
     const { createClient } = supabase;
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const { useState, useEffect, useRef, useCallback } = React;
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
     const CATS = ["Semua", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
     const PAY_METHODS = ["Cash", "Transfer Bank", "QRIS"];
     const fmt = n => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
     const fmtDate = d => new Date(d).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    const uid = () => Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const uid = () => Math.random().toString(36).substr(2, 9).toUpperCase();
     const txCode = c => `#${c}`;
     const genSKU = (cat, existing) => {
       const p = { "Air Zamzam": "ZAM", "Kurma": "KUR", "Tasbih": "TAS", "Sajadah": "SAJ", "Parfum": "PAR", "Peci & Mukena": "PEC", "Lainnya": "LAN" }[cat] || "PRD";
@@ -60,14 +60,12 @@
     function Modal({ children, onClose, title }) {
       return (
         <div className="fixed inset-0 bg-black/50 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 transition-opacity" onClick={onClose}>
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full max-w-md max-h-[90vh] overflow-y-auto animate-fade-up shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-5">
-              <h3 className="font-bold text-lg text-gray-900">{title}</h3>
-              <button onClick={onClose} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors text-gray-500">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-              </button>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl flex flex-col w-full max-w-md max-h-[90vh] animate-fade-up shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b border-gray-100 shrink-0">
+              <h3 className="font-extrabold text-lg text-gray-900">{title}</h3>
+              <button onClick={onClose} className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 font-bold transition-colors">✕</button>
             </div>
-            {children}
+            <div className="p-5 overflow-y-auto flex-1">{children}</div>
           </div>
         </div>
       );
@@ -129,11 +127,11 @@
       const [promos, setPromos] = useState([]);
       const [cashiers, setCashiers] = useState([]);
       const [sessions, setSessions] = useState([]);
-      const [settings, setSettings] = useState({ store_name: "Toko Azzahro", store_tagline: "Pilihan Berkah dari Tanah Suci", store_address: "", store_phone: "", store_footer: "Terima kasih, semoga berkah 🤲", store_logo: "", receipt_color: "#1a6b3c", wa_number: "6281234567890", kasir_pin: "1234", admin_pin: "0000", owner_pin: "9999" });
+      const [settings, setSettings] = useState({ store_name: "Toko Azzahro", store_tagline: "Pilihan Berkah dari Tanah Suci", store_address: "", store_phone: "", store_footer: "Terima kasih, semoga berkah 🤲", store_logo: "", receipt_color: "#1a6b3c", wa_number: "6281234567890", kasir_pin: "1234", admin_pin: "0000", owner_pin: "9999", product_categories: "Air Zamzam, Kurma, Tasbih, Sajadah, Parfum, Peci & Mukena, Lainnya", product_brands: "Umum, Ajwa, Sukari, Khalas" });
       const [toast, setToast] = useState("");
       const [loading, setLoading] = useState({});
 
-      const notify = msg => { setToast(msg); setTimeout(() => setToast(""), 2800); };
+      const notify = msg => { setToast(msg); setTimeout(() => setToast(""), 2500); };
       const color = settings.receipt_color || "#114232";
       const setLoad = (k, v) => setLoading(l => ({ ...l, [k]: v }));
 
@@ -149,7 +147,7 @@
         if (!role) return;
         const p = page;
         if (p === "dashboard") { loadProducts(); loadCustomers(); loadTransactions(); loadCashiers(); loadSessions(); loadSettings(); }
-        if (p === "produk") loadProducts();
+        if (p === "produk") { loadProducts(); loadSettings(); }
         if (p === "pelanggan") { loadCustomers(); loadTransactions(); }
         if (p === "promo") { loadPromos(); loadProducts(); }
         if (p === "laporan") { loadTransactions(); loadProducts(); loadCustomers(); }
@@ -160,47 +158,80 @@
       if (!role) return <PinPad onSuccess={setRole} />;
 
       const allPages = [
-        { id: "dashboard", icon: "🏠", label: "Home" },
-        { id: "produk", icon: "📦", label: "Produk" },
-        { id: "pelanggan", icon: "👥", label: "Pelanggan" },
-        { id: "promo", icon: "🏷️", label: "Promo" },
-        { id: "laporan", icon: "📊", label: "Laporan" },
-        { id: "sesi", icon: "🔄", label: "Sesi" },
-        { id: "pengaturan", icon: "⚙️", label: "Setting" },
+        { id: "dashboard", label: "Home", path: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
+        { id: "produk", label: "Produk", path: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" },
+        { id: "pelanggan", label: "Pelanggan", path: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" },
+        { id: "promo", label: "Promo", path: "M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" },
+        { id: "laporan", label: "Laporan", path: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
+        { id: "sesi", label: "Sesi", path: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+        { id: "pengaturan", label: "Setting", path: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" },
       ];
 
+      const navItems = allPages.filter(p => role === "admin" ? !["laporan"].includes(p.id) : true);
+
       return (
-        <div className="min-h-screen bg-grayLight max-w-md mx-auto relative shadow-sm flex flex-col">
+        <div className="min-h-screen bg-grayLight flex flex-col md:flex-row">
           <Toast msg={toast} />
-          <div className="bg-dark text-white p-4 flex items-center justify-between sticky top-0 z-50 rounded-b-2xl shadow-md">
+          
+          {/* Sidebar Desktop */}
+          <aside className="hidden md:flex flex-col w-64 bg-dark text-white fixed h-full z-50">
+            <div className="p-6 border-b border-white/10">
+              <div className="font-black text-xl tracking-tight mb-1">AZZAHRO</div>
+              <div className="text-[10px] text-white/50 uppercase tracking-widest font-bold">{role === "owner" ? "Owner Panel" : "Admin Panel"}</div>
+            </div>
+            <nav className="flex-1 p-4 space-y-1">
+              {navItems.map(t => (
+                <button key={t.id} onClick={() => setPage(t.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm ${page === t.id ? 'bg-brand text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={t.path}/></svg>
+                  {t.label}
+                </button>
+              ))}
+            </nav>
+            <div className="p-4 border-t border-white/10">
+              <a href="kasir.html" className="w-full flex items-center justify-between px-4 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-white font-bold text-xs transition-colors mb-2">
+                <span>Buka Kasir</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 5l7 7-7 7M3 12h18"/></svg>
+              </a>
+              <button onClick={() => setRole(null)} className="w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:bg-red-400/10 rounded-xl font-bold text-xs transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                Keluar
+              </button>
+            </div>
+          </aside>
+
+          {/* Header Mobile */}
+          <header className="md:hidden bg-dark text-white p-4 flex items-center justify-between sticky top-0 z-50 rounded-b-2xl shadow-md">
             <div>
-              <div className="font-extrabold text-lg tracking-tight flex items-center gap-2">⚙️ {allPages.find(p => p.id === page)?.label || "Admin"}</div>
-              <div className="text-xs text-white/70 font-medium mt-0.5">{role === "owner" ? "Owner" : "Admin"} · {settings.store_name}</div>
+              <div className="font-extrabold text-lg tracking-tight">{navItems.find(p => p.id === page)?.label || "Admin"}</div>
+              <div className="text-[10px] text-white/50 font-bold uppercase tracking-wider">{settings.store_name}</div>
             </div>
             <div className="flex gap-2">
-              <a href="kasir.html" className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl text-white font-semibold text-xs transition-colors flex items-center">Kasir →</a>
-              <button onClick={() => setRole(null)} className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-1.5 rounded-xl font-semibold text-xs transition-colors">Keluar</button>
+              <a href="kasir.html" className="bg-white/10 px-3 py-1.5 rounded-xl text-white font-bold text-[10px]">Kasir</a>
+              <button onClick={() => setRole(null)} className="bg-red-500/20 text-red-300 px-3 py-1.5 rounded-xl font-bold text-[10px]">Logout</button>
             </div>
-          </div>
+          </header>
 
-          <div className="pb-24 flex-1">
-            {page === "dashboard" && <Dashboard products={products} transactions={transactions} customers={customers} cashiers={cashiers} sessions={sessions} settings={settings} color={color} notify={notify} onRefresh={() => { loadProducts(); loadCustomers(); loadTransactions(); loadCashiers(); loadSessions(); }} />}
-            {page === "produk" && <Produk products={products} notify={notify} onReload={loadProducts} loading={loading.p} color={color} />}
-            {page === "pelanggan" && <Pelanggan customers={customers} transactions={transactions} notify={notify} onReload={() => { loadCustomers(); loadTransactions(); }} loading={loading.c} color={color} />}
-            {page === "promo" && <PromoPage promos={promos} products={products} notify={notify} onReload={loadPromos} color={color} />}
-            {page === "laporan" && <Laporan transactions={transactions} products={products} customers={customers} notify={notify} loading={loading.t} color={color} />}
-            {page === "sesi" && <SesiPage sessions={sessions} onReload={loadSessions} notify={notify} color={color} />}
-            {page === "pengaturan" && <Pengaturan cashiers={cashiers} settings={settings} notify={notify} role={role} onReload={() => { loadCashiers(); loadSettings(); }} color={color} />}
-          </div>
+          <main className="flex-1 md:ml-64 pb-24 md:pb-8">
+            <div className="max-w-5xl mx-auto">
+              {page === "dashboard" && <Dashboard products={products} transactions={transactions} customers={customers} cashiers={cashiers} sessions={sessions} settings={settings} color={color} notify={notify} onRefresh={() => { loadProducts(); loadCustomers(); loadTransactions(); loadCashiers(); loadSessions(); }} />}
+              {page === "produk" && <Produk products={products} notify={notify} onReload={loadProducts} loading={loading.p} color={color} settings={settings} onReloadSettings={loadSettings} />}
+              {page === "pelanggan" && <Pelanggan customers={customers} transactions={transactions} notify={notify} onReload={() => { loadCustomers(); loadTransactions(); }} loading={loading.c} color={color} />}
+              {page === "promo" && <PromoPage promos={promos} products={products} notify={notify} onReload={loadPromos} color={color} />}
+              {page === "laporan" && <Laporan transactions={transactions} products={products} customers={customers} notify={notify} loading={loading.t} color={color} />}
+              {page === "sesi" && <SesiPage sessions={sessions} onReload={loadSessions} notify={notify} color={color} />}
+              {page === "pengaturan" && <Pengaturan cashiers={cashiers} settings={settings} notify={notify} role={role} onReload={() => { loadCashiers(); loadSettings(); }} color={color} />}
+            </div>
+          </main>
 
-          <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-gray-100 flex justify-around p-2 pb-5 z-40 rounded-t-2xl shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
-            {allPages.filter(p => role === "admin" ? !["laporan"].includes(p.id) : true).map(t => (
-              <button key={t.id} onClick={() => setPage(t.id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all flex-1 ${page === t.id ? 'scale-105' : 'opacity-60 hover:opacity-100'}`}>
-                <span className="text-xl">{t.icon}</span>
-                <span className={`text-[9px] uppercase tracking-wider ${page === t.id ? 'text-dark font-extrabold' : 'text-gray-500 font-semibold'}`}>{t.label}</span>
+          {/* Navigation Mobile */}
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex justify-around p-2 pb-5 z-40 rounded-t-3xl shadow-[0_-8px_30px_rgba(0,0,0,0.05)]">
+            {navItems.map(t => (
+              <button key={t.id} onClick={() => setPage(t.id)} className={`flex flex-col items-center gap-1 p-2 rounded-2xl transition-all flex-1 ${page === t.id ? 'bg-brandLight text-brand scale-110' : 'text-gray-400 hover:text-gray-600'}`}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={t.path}/></svg>
+                <span className={`text-[8px] uppercase tracking-widest font-black`}>{t.label}</span>
               </button>
             ))}
-          </div>
+          </nav>
         </div>
       );
     }
@@ -228,23 +259,34 @@
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {[{ label: "Total Produk", val: products.length, icon: "📦", c: "text-blue-500", bg: "bg-blue-50" }, { label: "Pelanggan", val: customers.length, icon: "👥", c: "text-purple-500", bg: "bg-purple-50" }, { label: "Stok Menipis", val: lowStock.length, icon: "⚠️", c: "text-orange-500", bg: "bg-orange-50" }, { label: "Sesi Aktif", val: openSessions.length, icon: "🔄", c: openSessions.length > 0 ? "text-brand" : "text-gray-400", bg: openSessions.length > 0 ? "bg-green-50" : "bg-gray-50" }].map(s => (
+            {[
+              { label: "Total Produk", val: products.length, d: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4", c: "text-blue-500", bg: "bg-blue-50" }, 
+              { label: "Pelanggan", val: customers.length, d: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z", c: "text-purple-500", bg: "bg-purple-50" }, 
+              { label: "Stok Tipis", val: lowStock.length, d: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z", c: "text-orange-500", bg: "bg-orange-50" }, 
+              { label: "Sesi Aktif", val: openSessions.length, d: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15", c: openSessions.length > 0 ? "text-brand" : "text-gray-400", bg: openSessions.length > 0 ? "bg-green-50" : "bg-gray-50" }
+            ].map(s => (
               <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
-                <div className={`text-xl mb-3 w-10 h-10 flex items-center justify-center rounded-full ${s.bg}`}>{s.icon}</div>
-                <div>
+                <div className={`w-10 h-10 flex items-center justify-center rounded-full ${s.bg} ${s.c}`}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={s.d}/></svg>
+                </div>
+                <div className="mt-4">
                   <div className={`text-2xl font-black ${s.c}`}>{s.val}</div>
-                  <div className="text-xs text-gray-500 font-medium mt-0.5">{s.label}</div>
+                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mt-1">{s.label}</div>
                 </div>
               </div>
             ))}
           </div>
 
-          <button onClick={onRefresh} className="w-full bg-white border border-gray-200 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition-colors shadow-sm text-sm flex justify-center items-center gap-2">
-            🔄 Refresh Data
+          <button onClick={onRefresh} className="w-full bg-white border border-gray-200 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition-colors shadow-sm text-xs flex justify-center items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Refresh Data
           </button>
 
           {openSessions.length > 0 && <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-            <div className="font-bold text-sm mb-3 flex items-center gap-2 text-brand">🔄 Sesi Kasir Aktif</div>
+            <div className="font-bold text-sm mb-3 flex items-center gap-2 text-brand uppercase tracking-wider text-[11px]">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Sesi Kasir Aktif
+            </div>
             <div className="flex flex-col gap-1">
               {openSessions.map(s => <div key={s.id} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
                 <div>
@@ -259,7 +301,10 @@
           </div>}
 
           {lowStock.length > 0 && <div className="bg-white rounded-2xl p-4 shadow-sm border border-orange-100">
-            <div className="font-bold text-sm mb-3 flex items-center gap-2 text-orange-600">⚠️ Stok Menipis</div>
+            <div className="font-bold text-sm mb-3 flex items-center gap-2 text-orange-600 uppercase tracking-wider text-[11px]">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              Stok Menipis
+            </div>
             <div className="flex flex-col gap-1">
               {lowStock.map(p => <div key={p.id} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm font-medium text-gray-700">
                 <span className="truncate pr-4">{p.name}</span>
@@ -285,37 +330,87 @@
     }
 
     // ── PRODUK ────────────────────────────────────────────────────
-    function Produk({ products, notify, onReload, loading, color }) {
+    function Produk({ products, notify, onReload, loading, color, settings, onReloadSettings }) {
+      const dynamicCats = (settings.product_categories || "").split(",").map(s => s.trim()).filter(Boolean);
+      const dynamicBrands = (settings.product_brands || "").split(",").map(s => s.trim()).filter(Boolean);
       const [modal, setModal] = useState(null);
       const [form, setForm] = useState({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", stock: "", category: "Kurma", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" });
       const [search, setSearch] = useState("");
       const [saving, setSaving] = useState(false);
       const [showMenu, setShowMenu] = useState(false);
+      const [editVariants, setEditVariants] = useState(false);
       const fileRef = useRef();
 
-      const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.sku?.toLowerCase().includes(search.toLowerCase()) || p.brand?.toLowerCase().includes(search.toLowerCase()));
-      const autoSKU = () => setForm(f => ({ ...f, sku: genSKU(f.category, products) }));
+      const grouped = useMemo(() => {
+        const map = {};
+        products.forEach(p => {
+          if (!p.sku) return;
+          const key = p.sku.split('-')[0];
+          const isVariant = p.sku.includes('-');
+          if (!map[key]) {
+            map[key] = { ...p, variants: [] };
+          }
+          if (isVariant) {
+            map[key].variants.push(p);
+          } else {
+            // If it's a base product (no -), it's the main representative
+            const vars = map[key].variants;
+            map[key] = { ...p, variants: vars };
+          }
+        });
+        return Object.values(map).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      }, [products]);
+
+      const filtered = grouped.filter(p => (p.name || "").toLowerCase().includes(search.toLowerCase()) || (p.sku || "").toLowerCase().includes(search.toLowerCase()) || (p.brand || "").toLowerCase().includes(search.toLowerCase()));
+      const handleSKUChange = (val) => {
+        const clean = val.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        setForm(f => ({ 
+          ...f, 
+          sku: clean,
+          variants: f.variants.map(v => {
+            const suffix = v.sku.includes('-') ? v.sku.split('-')[1] : v.name.replace(/\s+/g, '').toUpperCase();
+            return { ...v, sku: clean ? `${clean}-${suffix}` : "" };
+          })
+        }));
+      };
+      const autoSKU = () => handleSKUChange(genSKU(form.category, products));
+
+      const [vModal, setVModal] = useState(false);
+      const [vForm, setVForm] = useState({ categories: settings.product_categories, brands: settings.product_brands });
+      const saveVars = async () => {
+        setSaving(true);
+        await db.from("settings").upsert({ key: "product_categories", value: vForm.categories }, { onConflict: "key" });
+        await db.from("settings").upsert({ key: "product_brands", value: vForm.brands }, { onConflict: "key" });
+        notify("Variabel diupdate!");
+        setSaving(false); setVModal(false); onReloadSettings();
+      };
       
-      const updateMatrix = (newTypes) => {
+      const generateMatrix = () => {
         setForm(f => {
           let combs = [[]];
-          newTypes.forEach(t => { 
+          f.variant_types.forEach(t => { 
             const opts = (t.options_string || "").split(",").map(s => s.trim()).filter(Boolean);
             if(opts.length > 0) { const temp = []; combs.forEach(c => { opts.forEach(o => temp.push([...c, o])); }); combs = temp; } 
           });
-          if (combs[0].length === 0) combs = [];
+          if (combs.length === 1 && combs[0].length === 0) combs = [];
           const newVariants = combs.map(c => {
             const name = c.join(" ");
+            const suffix = c.map(x => x.slice(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '')).join("");
             const existing = f.variants.find(v => v.name === name);
-            return existing || { sku: f.sku ? `${f.sku}-${c.map(x=>x.slice(0,3).toUpperCase()).join("-")}` : "", name, cost_price: 0, price: 0, stock: 0, weight: "", weight_unit: f.weight_unit || "g" };
+            if (existing) return { ...existing, sku: f.sku ? `${f.sku}-${suffix}` : "" };
+            // Partial match: if this new combo contains an old variant name, inherit its values
+            const partial = f.variants.find(v => name.includes(v.name) || v.name.includes(name));
+            if (partial) return { ...partial, name, sku: f.sku ? `${f.sku}-${suffix}` : "" };
+            return { sku: f.sku ? `${f.sku}-${suffix}` : "", name, cost_price: 0, price: 0, stock: 0, weight: "", weight_unit: f.weight_unit || "g" };
           });
-          return { ...f, variant_types: newTypes, variants: newVariants };
+          return { ...f, variants: newVariants };
         });
+        setEditVariants(false);
+        notify("Matrix diperbarui!");
       };
-      
-      const addVarType = () => { if(form.variant_types.length >= 2) return notify("Maksimal 2 tipe varian!"); updateMatrix([...form.variant_types, { name: "", options_string: "" }]); };
-      const updateVarType = (idx, field, val) => { const nt = [...form.variant_types]; nt[idx][field] = val; updateMatrix(nt); };
-      const remVarType = idx => { const nt = form.variant_types.filter((_, i) => i !== idx); updateMatrix(nt); };
+      const addVarType = () => { if(form.variant_types.length >= 2) return notify("Maksimal 2 tipe varian!"); setForm(f => ({ ...f, variant_types: [...f.variant_types, { name: "", options_string: "" }] })); };
+      const updateVarType = (idx, field, val) => { const nt = [...form.variant_types]; nt[idx][field] = val; setForm(f => ({ ...f, variant_types: nt })); };
+      const remVarType = idx => { const nt = form.variant_types.filter((_, i) => i !== idx); setForm(f => ({ ...f, variant_types: nt })); };
       const updateVarItem = (idx, field, val) => { setForm(f => { const nv = [...f.variants]; nv[idx][field] = val; return { ...f, variants: nv }; }); };
 
       const save = async () => {
@@ -323,19 +418,70 @@
         if (form.has_variants && form.variants.length === 0) return notify("Varian belum ditambahkan!");
         if (!form.sku) return notify("SKU wajib!");
         setSaving(true);
-        const payload = { sku: form.sku, name: form.name, brand: form.brand, description: form.description, cost_price: form.has_variants ? 0 : parseInt(form.cost_price)||0, price: form.has_variants ? 0 : parseInt(form.price), stock: form.has_variants ? 0 : parseInt(form.stock) || 0, category: form.category, weight: form.weight, weight_unit: form.weight_unit, variant_types: form.has_variants ? form.variant_types.map(vt => ({ name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean) })) : [], variants: form.has_variants ? form.variants : [], image_url: form.image_url || `https://placehold.co/400x400/1a6b3c/white?text=${encodeURIComponent(form.name.slice(0, 4))}`, active: true };
-        let error;
-        if (modal === "add") { ({ error } = await db.from("products").insert(payload)); if (!error) notify("Produk ditambahkan!"); }
-        else { ({ error } = await db.from("products").update(payload).eq("id", modal)); if (!error) notify("Produk diupdate!"); }
+        
+        const variantPayloads = form.has_variants ? form.variants.map(v => ({
+          sku: v.sku || `${form.sku}-${v.name.replace(/\s+/g, '').toUpperCase()}`,
+          name: form.name, brand: form.brand, description: form.description,
+          category: form.category, image_url: form.image_url,
+          variant_name: v.name,
+          variant_options: form.variant_types.map(vt => ({ name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean) })),
+          cost_price: parseInt(v.cost_price)||0,
+          price: parseInt(v.price)||0,
+          stock: parseInt(v.stock)||0,
+          weight: v.weight,
+          weight_unit: v.weight_unit || "g",
+          active: true
+        })) : [{
+          sku: form.sku, name: form.name, brand: form.brand, description: form.description,
+          category: form.category, image_url: form.image_url || `https://placehold.co/400x400/114232/white?text=${encodeURIComponent(form.name.slice(0, 4))}`,
+          variant_options: [],
+          cost_price: parseInt(form.cost_price)||0,
+          price: parseInt(form.price),
+          stock: parseInt(form.stock) || 0,
+          weight: form.weight,
+          weight_unit: form.weight_unit,
+          active: true
+        }];
+
+        // Delete old rows if editing
+        if (modal !== "add") {
+          const old = products.find(p => p.id === modal);
+          const oldPrefix = (old.sku || "").split('-')[0];
+          await db.from("products").delete().ilike('sku', `${oldPrefix}%`);
+        }
+
+        const { error } = await db.from("products").insert(variantPayloads);
+        
         setSaving(false);
         if (error) return notify("Gagal: " + error.message);
         setModal(null); onReload();
       };
-      const del = async (id) => { const { error } = await db.from("products").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); onReload(); };
-      const openEdit = p => { setModal(p.id); setForm({ sku: p.sku || "", name: p.name, brand: p.brand || "", description: p.description || "", cost_price: p.cost_price || "", price: p.price, stock: p.stock, category: p.category, weight: p.weight || "", weight_unit: p.weight_unit || "g", has_variants: p.variants && p.variants.length > 0, variant_types: (p.variant_types || []).map(vt => ({ name: vt.name, options_string: (vt.options || []).join(", ") })), variants: p.variants || [], image_url: p.image_url || "" }); };
+      const del = async (p) => {
+        const prefix = (p.sku || "").split('-')[0];
+        const { error } = await db.from("products").delete().ilike('sku', `${prefix}%`);
+        if (error) return notify("Gagal: " + error.message);
+        notify("Dihapus!"); onReload();
+      };
+      const openEdit = p => {
+        const prefix = (p.sku || "").split('-')[0];
+        const items = products.filter(x => (x.sku || "").startsWith(prefix));
+        const first = items[0] || p;
+        const variants = items.filter(x => x.sku.includes('-'));
+        
+        setModal(first.id);
+        setForm({
+          sku: prefix, name: first.name, brand: first.brand || "", description: first.description || "",
+          cost_price: first.cost_price || "", price: first.price || "", stock: first.stock || "",
+          category: first.category, weight: first.weight || "", weight_unit: first.weight_unit || "g",
+          has_variants: variants.length > 0,
+          variant_types: (first.variant_options || []).map(vt => ({ name: vt.name, options_string: (vt.options || []).join(", ") })),
+          variants: variants.map(v => ({ sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, stock: v.stock, weight: v.weight, weight_unit: v.weight_unit })),
+          image_url: first.image_url || ""
+        });
+      };
 
-      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, Merk: p.brand, Deskripsi: p.description, HargaBeli: p.cost_price, Harga: p.price, Stok: p.stock, Kategori: p.category, Berat: `${p.weight || ""}${p.weight_unit || ""}`, Foto: p.image_url, Varian: p.variants && p.variants.length > 0 ? p.variants.map(v => `${v.sku || p.sku + '-' + v.name}::${v.name}::${v.cost_price||0}::${v.price||0}::${v.stock||0}::${v.weight||""}${v.weight_unit||""}`).join(" | ") : "" }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
-      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR-001", Nama: "Contoh Produk", Merk: "Brand", Deskripsi: "Deskripsi", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", Berat: "500g", Foto: "https://...", Varian: "KUR-001-A::Hijau L::40000::50000::10::200g | KUR-001-B::Kuning M::45000::55000::5::250g" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
+      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, NamaVarian: p.variant_name || "", Merk: p.brand, Deskripsi: p.description, HargaBeli: p.cost_price, Harga: p.price, Stok: p.stock, Kategori: p.category, Berat: `${p.weight || ""}${p.weight_unit || ""}`, Foto: p.image_url }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
+      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR001", Nama: "Kurma Ajwa", NamaVarian: "", Merk: "Azzahro", Deskripsi: "Kurma premium", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", Berat: "500g", Foto: "" }, { SKU: "KUR002-MER500", Nama: "Kurma Sukari", NamaVarian: "Merah 500g", Merk: "Azzahro", Deskripsi: "Manis lembut", HargaBeli: 35000, Harga: 45000, Stok: 5, Kategori: "Kurma", Berat: "500g", Foto: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
       const importFile = e => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
@@ -343,15 +489,29 @@
           try {
             const wb = XLSX.read(ev.target.result, { type: "binary" });
             const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-            const imported = rows.map(r => {
-               let variants = [];
-               let variant_types = [];
-               if (r.Varian) { variants = String(r.Varian).split("|").map(v => { const parts = v.trim().split("::"); return { sku: parts[0], name: parts[1] || "", cost_price: parseInt(parts[2])||0, price: parseInt(parts[3]||parts[2]) || 0, stock: parseInt(parts[4])||0, weight: String(parts[5]||"").replace(/[^0-9.]/g, ""), weight_unit: String(parts[5]||"g").replace(/[0-9.]/g, "") || "g" }; }).filter(v => v.name); variant_types = [{name: "Varian (Import)", options_string: variants.map(v=>v.name).join(", ")}]; }
-               return { sku: String(r.SKU || genSKU(r.Kategori || "Lainnya", products)), name: r.Nama || "", brand: r.Merk || "", description: r.Deskripsi || "", cost_price: variants.length > 0 ? 0 : (parseInt(r.HargaBeli) || 0), price: variants.length > 0 ? 0 : (parseInt(r.Harga) || 0), stock: variants.length > 0 ? 0 : (parseInt(r.Stok) || 0), category: r.Kategori || "Lainnya", weight: String(r.Berat || "").replace(/[^0-9.]/g, ""), weight_unit: String(r.Berat || "g").replace(/[0-9.]/g, "") || "g", variant_types: variants.length > 0 ? variant_types.map(vt => ({name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean)})) : [], variants, image_url: r.Foto || `https://placehold.co/400x400/1a6b3c/white?text=${encodeURIComponent((r.Nama || "P").slice(0, 4))}`, active: true };
-            }).filter(r => r.name);
+            const imported = rows.map(r => ({
+              sku: String(r.SKU || uid()),
+              name: r.Nama || "Tanpa Nama",
+              variant_name: r.NamaVarian || "",
+              brand: r.Merk || "",
+              description: r.Deskripsi || "",
+              cost_price: parseInt(r.HargaBeli) || 0,
+              price: parseInt(r.Harga) || 0,
+              stock: parseInt(r.Stok) || 0,
+              category: r.Kategori || "Umum",
+              weight: String(r.Berat || "").replace(/[^0-9.]/g, ""),
+              weight_unit: String(r.Berat || "g").replace(/[0-9.]/g, "") || "g",
+              image_url: r.Foto || "",
+              is_parent: !String(r.SKU).includes('-'),
+              parent_sku: String(r.SKU).split('-')[0],
+              active: true
+            }));
             let added = 0, updated = 0;
-            for (const item of imported) { const ex = products.find(p => p.sku === item.sku); if (ex) { await db.from("products").update(item).eq("id", ex.id); updated++; } else { await db.from("products").insert(item); added++; } }
-            notify(`${added} ditambah, ${updated} diupdate`); onReload();
+            for (const item of imported) { 
+              const { error } = await db.from("products").upsert(item, { onConflict: "sku" });
+              if (!error) added++;
+            }
+            notify(`${added} baris diproses`); onReload();
           } catch (err) { notify("Gagal import: " + err.message); }
           e.target.value = "";
         };
@@ -364,9 +524,20 @@
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / SKU..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
             <button onClick={() => { setModal("add"); setForm({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", stock: "", category: "Kurma", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
             <div className="relative">
-              <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">⋯</button>
+              <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+              </button>
               {showMenu && <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-lg border border-gray-100 min-w-[180px] z-50 overflow-hidden">
-                {[{ l: "📥 Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "📤 Export Excel", a: exportXLSX }, { l: "📋 Download Template", a: dlTemplate }, { l: "🔄 Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
+                {[
+                  { l: "Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); }, d: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" }, 
+                  { l: "Export Excel", a: exportXLSX, d: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" }, 
+                  { l: "Download Template", a: dlTemplate, d: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" }, 
+                  { l: "Kelola Variabel", a: () => { setVModal(true); setVForm({ categories: settings.product_categories, brands: settings.product_brands }); setShowMenu(false); }, d: "M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" }, 
+                  { l: "Refresh", a: () => { onReload(); setShowMenu(false); }, d: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" }
+                ].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-xs font-black uppercase tracking-wider text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0 flex items-center gap-3">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d={item.d}/></svg>
+                  {item.l}
+                </button>)}
               </div>}
             </div>
           </div>
@@ -374,7 +545,7 @@
 
           <div className="flex flex-col gap-3">
             {loading ? <Spinner /> : filtered.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Tidak ada produk</div> : filtered.map(p => <div key={p.id} className="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex gap-3 items-center group">
-              <img src={p.image_url || `https://placehold.co/80x80/1a6b3c/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} alt={p.name} className="w-16 h-16 rounded-xl object-cover shrink-0" onError={e => e.target.src = `https://placehold.co/80x80/1a6b3c/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} />
+              <img src={p.image_url || `https://placehold.co/80x80/114232/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} alt={p.name} className="w-16 h-16 rounded-xl object-cover shrink-0" onError={e => e.target.src = `https://placehold.co/80x80/114232/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} />
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap gap-1.5 mb-1">
                   <span className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{p.sku}</span>
@@ -382,20 +553,20 @@
                   {p.weight && <span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{p.weight}{p.weight_unit}</span>}
                 </div>
                 <h3 className="font-bold text-gray-800 text-sm truncate">{p.name}</h3>
-                {p.variants && p.variants.length > 0 && <div className="text-[10px] text-blue-500 font-medium mt-0.5">Varian: {p.variants.map(v => v.name).join(", ")}</div>}
+                {p.variants && p.variants.length > 0 && <div className="text-[10px] text-blue-500 font-medium mt-0.5">Varian: {p.variants.map(v => v.variant_name).join(", ")}</div>}
                 <div className="flex gap-3 items-center mt-1.5">
                   <span className="font-extrabold text-[15px]" style={{ color }}>
                     {p.variants && p.variants.length > 0 
-                      ? (() => { const prices = p.variants.map(v=>v.price); const min = Math.min(...prices); const max = Math.max(...prices); return min === max ? fmt(min) : `${fmt(min)} - ${fmt(max)}`; })()
+                      ? (() => { const prices = [p.price, ...p.variants.map(v=>v.price)]; const min = Math.min(...prices); const max = Math.max(...prices); return min === max ? fmt(min) : `${fmt(min)} - ${fmt(max)}`; })()
                       : fmt(p.price)
                     }
                   </span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.stock <= 5 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-700'}`}>{p.stock} {p.variants && p.variants.length > 0 ? "stok (gabungan)" : "stok"}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.stock <= 5 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-700'}`}>{p.variants?.length > 0 ? [p.stock, ...p.variants.map(v=>v.stock)].reduce((a,b)=>a+b,0) : p.stock} {p.variants?.length > 0 ? "stok (gabungan)" : "stok"}</span>
                 </div>
               </div>
               <div className="flex flex-col gap-1.5 shrink-0">
                 <button onClick={() => openEdit(p)} className="px-3 py-1.5 bg-orange-50 text-orange-600 hover:bg-orange-100 rounded-lg text-xs font-bold transition-colors">Edit</button>
-                <button onClick={() => del(p.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors">Hapus</button>
+                <button onClick={() => del(p)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors">Hapus</button>
               </div>
             </div>)}
           </div>
@@ -404,27 +575,47 @@
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Kategori</label>
-                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">{CATS.filter(c => c !== "Semua").map(c => <option key={c}>{c}</option>)}</select>
+                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">{dynamicCats.map(c => <option key={c}>{c}</option>)}</select>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{form.has_variants ? "SKU Induk (Awalan Varian) *" : "SKU *"}</label>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">SKU Induk *</label>
                 <div className="flex gap-2">
-                  <input value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase() }))} placeholder="cth: KUR-001" className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand/30 uppercase" />
-                  <button onClick={autoSKU} className="px-4 bg-brandLight text-brand hover:bg-brand/20 font-bold rounded-xl transition-colors">⚡ Auto</button>
+                  <input value={form.sku} onChange={e => handleSKUChange(e.target.value)} placeholder="cth: KUR001" className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand/30 uppercase" />
+                  <button onClick={autoSKU} className="px-4 bg-brandLight text-brand hover:bg-brand/20 font-black uppercase tracking-wider text-[10px] rounded-xl transition-all flex items-center gap-1.5">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    Auto
+                  </button>
                 </div>
-                {form.has_variants && <p className="text-[10px] text-gray-400 mt-1">SKU Induk akan digunakan untuk membuat SKU Varian secara otomatis.</p>}
+                <div className="text-[10px] text-gray-400 mt-1">Hanya huruf dan angka (Alphanumeric). SKU Varian akan mengikuti kode ini.</div>
               </div>
-              {[{ label: "Nama *", key: "name", ph: "Nama produk" }, { label: "Merk", key: "brand", ph: "Brand" }, { label: "URL Foto", key: "image_url", ph: "https://..." }].map(f => <div key={f.key}>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
-                <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>)}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Nama *</label>
+                <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Nama produk" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Merk</label>
+                  <select value={form.brand} onChange={e => setForm(p => ({ ...p, brand: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                    <option value="">- Tanpa Merk -</option>
+                    {dynamicBrands.map(b => <option key={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">URL Foto</label>
+                  <input value={form.image_url} onChange={e => setForm(p => ({ ...p, image_url: e.target.value }))} placeholder="https://..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Deskripsi</label>
+                <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} placeholder="Deskripsi singkat..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+              </div>
               <div className="flex items-center justify-between bg-brandLight p-3 rounded-xl border border-brand/20">
                 <label className="text-sm font-bold text-brand">Aktifkan Varian Produk</label>
                 <input type="checkbox" checked={form.has_variants} onChange={e => setForm(f => ({ ...f, has_variants: e.target.checked }))} className="w-5 h-5 rounded text-brand focus:ring-brand" />
               </div>
               {!form.has_variants && <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Beli *</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Beli</label>
                   <input value={form.cost_price} onChange={e => setForm(p => ({ ...p, cost_price: e.target.value }))} type="number" placeholder="40000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
                 </div>
                 <div>
@@ -443,38 +634,55 @@
                   <select value={form.weight_unit} onChange={e => setForm(f => ({ ...f, weight_unit: e.target.value }))} className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"><option>g</option><option>kg</option><option>ml</option><option>L</option></select>
                 </div>
               </div>}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Deskripsi</label>
-                <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} placeholder="Deskripsi singkat..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
-              </div>
+
               {form.has_variants && <div className="space-y-4">
                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                   <div className="flex justify-between items-center mb-3">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Tipe Varian (Max 2)</label>
-                    <button onClick={addVarType} className="px-3 py-1 bg-white border border-gray-200 text-brand text-xs font-bold rounded-lg hover:bg-brandLight transition-colors">+ Tambah Tipe</button>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">⚙️ Konfigurasi Varian</label>
+                    <button onClick={() => setEditVariants(!editVariants)} className="px-3 py-1.5 bg-white border border-gray-200 text-brand text-[10px] font-bold rounded-lg hover:bg-gray-50 transition-all shadow-sm">
+                      {editVariants ? "Batal Edit" : "✏️ Edit Tipe Varian"}
+                    </button>
                   </div>
-                  {form.variant_types.length === 0 && <div className="text-xs text-gray-400 italic">Belum ada tipe varian. Tambahkan tipe seperti "Warna" atau "Ukuran".</div>}
-                  {form.variant_types.map((vt, i) => <div key={i} className="mb-3 last:mb-0 p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
-                    <div className="flex gap-2 mb-2">
-                      <input value={vt.name} onChange={e => updateVarType(i, 'name', e.target.value)} placeholder="Contoh: Warna" className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-brand font-bold" />
-                      <button onClick={() => remVarType(i)} className="px-3 bg-red-50 text-red-500 rounded font-bold text-xs hover:bg-red-500 hover:text-white transition-colors">Hapus</button>
+                  
+                  {editVariants ? (
+                    <div className="space-y-3 animate-fade-in">
+                      {form.variant_types.map((vt, i) => <div key={i} className="p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
+                        <div className="flex gap-2 mb-2">
+                          <input value={vt.name} onChange={e => updateVarType(i, 'name', e.target.value)} placeholder="Tipe (cth: Warna)" className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-brand font-bold" />
+                          <button onClick={() => remVarType(i)} className="px-3 text-red-400 hover:text-red-600 transition-colors">✕</button>
+                        </div>
+                        <input value={vt.options_string || ""} onChange={e => updateVarType(i, 'options_string', e.target.value)} placeholder="Pilihan: Merah, Hijau, Biru" className="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
+                      </div>)}
+                      <div className="flex gap-2 mt-2">
+                        {form.variant_types.length < 2 && <button onClick={addVarType} className="flex-1 py-2 bg-white border border-dashed border-gray-300 text-gray-500 text-xs font-bold rounded-lg hover:border-brand hover:text-brand transition-all">+ Tambah Tipe</button>}
+                        <button onClick={generateMatrix} className="flex-[1.5] py-2 bg-brand text-white text-xs font-bold rounded-lg shadow-md hover:opacity-90 active:scale-95 transition-all">🔄 Terapkan & Update Matrix</button>
+                      </div>
                     </div>
-                    <input value={vt.options_string || ""} onChange={e => updateVarType(i, 'options_string', e.target.value)} placeholder="Pilihan (pisahkan dengan koma): Merah, Putih, Hitam" className="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
-                  </div>)}
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {form.variant_types.length === 0 ? <div className="text-[10px] text-gray-400 italic">Belum ada varian. Klik "Edit Tipe Varian" untuk menambahkan.</div> : form.variant_types.map((vt, i) => <div key={i} className="px-3 py-2 bg-white border border-gray-100 rounded-lg text-[11px]">
+                        <span className="font-bold text-gray-400 uppercase mr-2">{vt.name}:</span>
+                        <span className="text-gray-700 font-semibold">{vt.options_string}</span>
+                      </div>)}
+                    </div>
+                  )}
                 </div>
 
-                {form.variants.length > 0 && <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 overflow-hidden">
-                  <label className="block text-xs font-bold text-gray-500 mb-3 uppercase">Matrix Varian</label>
+                {form.variants.length > 0 && <div className="bg-white p-4 rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest">📊 Matrix Varian</label>
+                    <span className="text-[10px] text-gray-400 font-medium">{form.variants.length} kombinasi</span>
+                  </div>
                   <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-                    <table className="w-full text-left border-collapse min-w-[600px]">
+                    <table className="w-full text-left border-collapse min-w-[650px]">
                       <thead>
-                        <tr className="border-b-2 border-gray-200">
-                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/5">Varian</th>
-                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">SKU</th>
-                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">Harga Beli</th>
-                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">Harga Jual</th>
-                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/12">Stok</th>
-                          <th className="pb-2 text-xs font-bold text-gray-500 w-1/6">Berat</th>
+                        <tr className="border-b border-gray-100">
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[20%]">Varian</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[20%]">SKU Varian</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Beli</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Jual</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%] text-center">Stok</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[20%]">Berat</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -500,6 +708,22 @@
                 <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
                 <button onClick={save} disabled={saving} className="flex-[2] py-3.5 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Produk"}</button>
               </div>
+            </div>
+          </Modal>}
+
+          {vModal && <Modal onClose={() => setVModal(false)} title="Kelola Variabel Produk">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Daftar Kategori</label>
+                <textarea value={vForm.categories} onChange={e => setVForm(v => ({ ...v, categories: e.target.value }))} rows={4} placeholder="Pisahkan dengan koma..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+                <p className="text-[10px] text-gray-400 mt-1">Pisahkan setiap kategori dengan koma.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Daftar Merk/Brand</label>
+                <textarea value={vForm.brands} onChange={e => setVForm(v => ({ ...v, brands: e.target.value }))} rows={4} placeholder="Pisahkan dengan koma..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+                <p className="text-[10px] text-gray-400 mt-1">Pisahkan setiap merk dengan koma.</p>
+              </div>
+              <button onClick={saveVars} disabled={saving} className="w-full bg-brand text-white font-bold py-4 rounded-2xl shadow-lg hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 mt-4">{saving ? "Menyimpan..." : "Simpan Variabel"}</button>
             </div>
           </Modal>}
         </div>
@@ -558,9 +782,11 @@
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / HP / email..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
             <button onClick={() => { setModal("add"); setForm({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
             <div className="relative">
-              <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">⋯</button>
+              <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+              </button>
               {showMenu && <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-lg border border-gray-100 min-w-[180px] z-50 overflow-hidden">
-                {[{ l: "📥 Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "📤 Export Excel", a: exportXLSX }, { l: "📋 Download Template", a: dlTemplate }, { l: "🔄 Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
+                {[{ l: "Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "Export Excel", a: exportXLSX }, { l: "Download Template", a: dlTemplate }, { l: "Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
               </div>}
             </div>
           </div>
@@ -571,7 +797,7 @@
               <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-black text-xl shrink-0 shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>{c.name[0].toUpperCase()}</div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-bold text-gray-800 text-sm truncate">{c.name}</h3>
-                <div className="text-[11px] text-gray-500 font-medium mt-0.5">📱 {c.phone}{c.city ? ` · 📍 ${c.city}` : ""}</div>
+                <div className="text-[11px] text-gray-500 font-medium mt-0.5">{c.phone}{c.city ? ` · ${c.city}` : ""}</div>
               </div>
               <div className="text-right shrink-0">
                 <div className="font-extrabold text-[15px]" style={{ color }}>{fmt(custTotal(c.id))}</div>
@@ -759,6 +985,7 @@
       const [tab, setTab] = useState("laporan");
       const [range, setRange] = useState("today");
       const [txDetail, setTxDetail] = useState(null);
+      const [commRate, setCommRate] = useState(parseFloat(localStorage.getItem('comm_rate') || '2.5'));
       const now = new Date();
 
       const filter = t => {
@@ -777,15 +1004,50 @@
       const top = Object.entries(soldMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
       const cashierMap = {}; filtered.forEach(t => { if (t.cashier_name) cashierMap[t.cashier_name] = (cashierMap[t.cashier_name] || 0) + t.total; });
 
-      const expTx = () => { const ws = XLSX.utils.json_to_sheet(filtered.flatMap(t => (t.transaction_items || []).map(i => ({ KodeTx: txCode(t.tx_code), Tanggal: fmtDate(t.created_at), Pelanggan: t.customer_name, Kasir: t.cashier_name || "-", SKU: i.sku, Produk: i.name, Qty: i.qty, Harga: i.price, Subtotal: i.subtotal, Total: t.total, Metode: t.pay_method || "Cash" })))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Transaksi"); XLSX.writeFile(wb, `transaksi_${Date.now()}.xlsx`); notify("Diexport!"); };
+      const expTx = () => {
+        const rows = filtered.flatMap(t => (t.transaction_items || []).map(i => ({ KodeTx: txCode(t.tx_code), Tanggal: fmtDate(t.created_at), Pelanggan: t.customer_name, Kasir: t.cashier_name || "-", SKU: i.sku, Produk: i.name, Qty: i.qty, Harga: i.price, Subtotal: i.subtotal, Total: t.total, Metode: t.pay_method || "Cash" })));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Transaksi");
+        XLSX.writeFile(wb, "transaksi_" + Date.now() + ".xlsx");
+        notify("Diexport!");
+      };
+      const expProduk = () => {
+        const rows = products.map(p => ({ SKU: p.sku, Nama: p.name, Merk: p.brand, Harga: p.price, Stok: p.stock, Kategori: p.category }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Produk");
+        XLSX.writeFile(wb, "produk_" + Date.now() + ".xlsx");
+        notify("Diexport!");
+      };
 
       const R = ({ label, val, bold, c }) => <div className="flex justify-between items-center py-2.5 border-b border-gray-50 last:border-0 text-sm"><span className="text-gray-500 font-medium">{label}</span><span className={`${bold ? 'font-extrabold' : 'font-semibold'} ${c || 'text-gray-800'}`}>{val}</span></div>;
       const rb = (id, l) => <button key={id} onClick={() => setRange(id)} className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${range === id ? 'bg-dark text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{l}</button>;
 
+      // Per-kasir omzet dan komisi
+      const cashierStats = {};
+      filtered.forEach(t => {
+        const name = t.cashier_name || 'Tidak Diketahui';
+        if (!cashierStats[name]) cashierStats[name] = { omzet: 0, txCount: 0 };
+        cashierStats[name].omzet += t.total;
+        cashierStats[name].txCount += 1;
+      });
+      const cashierList = Object.entries(cashierStats).sort((a, b) => b[1].omzet - a[1].omzet);
+
       return (
         <div className="p-4">
-          <div className="flex gap-2 mb-5 bg-white p-1.5 rounded-2xl border border-gray-100 shadow-sm">
-            {[{ id: "laporan", label: "📈 Laporan" }, { id: "transaksi", label: "🧾 Transaksi" }, { id: "ekspor", label: "📊 Export" }].map(t => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${tab === t.id ? 'bg-gray-100 text-dark shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>{t.label}</button>)}
+          <div className="flex gap-2 mb-5 bg-white p-1.5 rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
+            {[
+              { id: "laporan", label: "Laporan", path: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" }, 
+              { id: "transaksi", label: "Transaksi", path: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" }, 
+              { id: "komisi", label: "Komisi", path: "M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" },
+              { id: "ekspor", label: "Export", path: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" }
+            ].map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${tab === t.id ? 'bg-brand text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d={t.path}/></svg>
+                {t.label}
+              </button>
+            ))}
           </div>
 
           {tab === "laporan" && <div className="space-y-4 animate-fade-up">
@@ -799,14 +1061,15 @@
             </div>
 
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-              <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider">💳 Metode Pembayaran</div>
-              {PAY_METHODS.map(m => <R key={m} label={`${m === "Cash" ? "💵" : m === "Transfer Bank" ? "🏦" : "📱"} ${m}`} val={fmt(byMethod[m] || 0)} bold c="text-brand" />)}
+              <div className="font-extrabold text-[11px] text-gray-400 mb-4 uppercase tracking-widest flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                Metode Pembayaran
+              </div>
+              {PAY_METHODS.map(m => {
+                const paths = { "Cash": "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z", "Transfer Bank": "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z", "QRIS": "M12 4v1m6 11h2m-6 0h2m-2 4h2m-16-4h2m-2 4h2m1.5-6.236L11 8.586M7 11l2.293-2.293M11 13l2.293-2.293M15 17l2.293-2.293" };
+                return <R key={m} label={<div className="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={paths[m] || ""}/></svg>{m}</div>} val={fmt(byMethod[m] || 0)} bold c="text-brand" />;
+              })}
             </div>
-
-            {Object.keys(cashierMap).length > 0 && <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-              <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider">🧾 Omzet per Kasir</div>
-              {Object.entries(cashierMap).sort((a, b) => b[1] - a[1]).map(([n, rev]) => <R key={n} label={n} val={fmt(rev)} bold c="text-brand" />)}
-            </div>}
 
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
               <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider">🏆 Produk Terlaris</div>
@@ -841,11 +1104,67 @@
             </div>}
           </div>}
 
+          {tab === "komisi" && <div className="space-y-4 animate-fade-up">
+            <div className="flex gap-2 flex-wrap mb-2">{[["today", "Hari ini"], ["week", "7 Hari"], ["month", "Bulan ini"], ["all", "Semua"]].map(([id, l]) => rb(id, l))}</div>
+
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                Pengaturan Komisi
+              </div>
+              <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Persentase Komisi (%)</label>
+              <div className="flex gap-2 items-center">
+                <input value={commRate} onChange={e => { const v = parseFloat(e.target.value)||0; setCommRate(v); localStorage.setItem('comm_rate', v); }} type="number" step="0.1" min="0" max="100" className="w-32 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xl font-bold focus:outline-none focus:ring-2 focus:ring-brand/30 text-brand" />
+                <span className="text-2xl font-black text-gray-400">%</span>
+                <div className="flex gap-1 ml-2">{[1, 2, 2.5, 3, 5].map(v => <button key={v} onClick={() => { setCommRate(v); localStorage.setItem('comm_rate', v); }} className={`px-3 py-2 rounded-lg text-xs font-bold border-2 transition-all ${commRate === v ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 text-gray-500 hover:border-gray-200'}`}>{v}%</button>)}</div>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-2 font-medium">Komisi dihitung dari total omzet per kasir. Disimpan di browser lokal.</p>
+            </div>
+
+            {cashierList.length === 0 ? (
+              <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada data transaksi untuk periode ini</div>
+            ) : (
+              <div className="space-y-3">
+                {cashierList.map(([name, stats]) => {
+                  const komisi = stats.omzet * commRate / 100;
+                  return (
+                    <div key={name} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-black text-lg shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>{name[0]?.toUpperCase()}</div>
+                        <div>
+                          <div className="font-extrabold text-gray-800">{name}</div>
+                          <div className="text-[11px] text-gray-400 font-medium">{stats.txCount} transaksi</div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                          <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Omzet</div>
+                          <div className="font-black text-sm text-gray-800">{fmt(stats.omzet)}</div>
+                        </div>
+                        <div className="bg-green-50 rounded-xl p-3 border border-green-100">
+                          <div className="text-[9px] font-bold text-green-600/70 uppercase tracking-widest mb-1">Komisi ({commRate}%)</div>
+                          <div className="font-black text-sm text-green-700">{fmt(komisi)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="bg-brandLight rounded-2xl p-4 border border-brand/20 flex justify-between items-center">
+                  <div>
+                    <div className="text-xs font-bold text-brand/60 uppercase tracking-widest">Total Komisi Semua Kasir</div>
+                    <div className="text-[10px] text-brand/50 font-medium">{cashierList.length} kasir · {commRate}% dari total omzet</div>
+                  </div>
+                  <div className="font-black text-xl" style={{ color }}>{fmt(cashierList.reduce((s, [_n, d]) => s + d.omzet * commRate / 100, 0))}</div>
+                </div>
+              </div>
+            )}
+          </div>}
+
           {tab === "ekspor" && <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 animate-fade-up">
             <div className="font-extrabold text-sm text-gray-800 mb-5 uppercase tracking-wider">📤 Export Data</div>
             <div className="flex flex-col gap-3">
               <button onClick={expTx} className="w-full py-4 bg-purple-50 text-purple-600 hover:bg-purple-100 border border-purple-100 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2">🧾 Export Transaksi (.xlsx)</button>
-              <button onClick={() => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, Merk: p.brand, Harga: p.price, Stok: p.stock, Kategori: p.category }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); }} className="w-full py-4 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2">📦 Export Produk (.xlsx)</button>
+              <button onClick={expProduk} className="w-full py-4 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2">📦 Export Produk (.xlsx)</button>
             </div>
           </div>}
 
@@ -895,7 +1214,10 @@
         <div className="p-4">
           <div className="flex justify-between items-center mb-6">
             <h2 className="font-extrabold text-lg text-gray-800">Monitor Sesi</h2>
-            <button onClick={onReload} className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-bold shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2">🔄 Refresh</button>
+            <button onClick={onReload} className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-bold shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
           </div>
 
           {open.length > 0 && <div className="mb-8">
@@ -904,7 +1226,9 @@
               {open.map(s => <div key={s.id} onClick={() => setDetail(s)} className="bg-white rounded-2xl p-4 shadow-sm border-l-4 border-y border-r border-gray-100 cursor-pointer hover:shadow-md transition-all group" style={{ borderLeftColor: color }}>
                 <div className="flex justify-between items-start">
                   <div>
-                    <div className="font-bold text-sm text-gray-800 mb-1">{s.cashier_name}</div>
+                    <div className="font-bold text-sm text-gray-800 mb-1">
+                      {s.cashier_name === s.opened_by ? s.cashier_name : `${s.cashier_name} — ${s.opened_by || "Kasir"}`}
+                    </div>
                     <div className="text-[11px] text-gray-500 font-medium">PIC: <span className="font-bold text-gray-700">{s.opened_by || "-"}</span></div>
                     <div className="text-[10px] text-gray-400 mt-0.5">Buka: {fmtDate(s.opened_at)}</div>
                   </div>
@@ -923,7 +1247,9 @@
               {closed.slice(0, 20).map(s => <div key={s.id} onClick={() => setDetail(s)} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 cursor-pointer hover:border-gray-300 transition-colors">
                 <div className="flex justify-between items-start">
                   <div>
-                    <div className="font-bold text-sm text-gray-800 mb-1">{s.cashier_name}</div>
+                    <div className="font-bold text-sm text-gray-800 mb-1">
+                      {s.cashier_name === s.opened_by ? s.cashier_name : `${s.cashier_name} — ${s.opened_by || "Kasir"}`}
+                    </div>
                     <div className="text-[10px] text-gray-500 font-medium">{fmtDate(s.opened_at)}</div>
                     <div className="text-[10px] text-gray-500 font-medium mt-0.5">↓ {s.closed_at ? fmtDate(s.closed_at) : "-"}</div>
                   </div>
@@ -940,34 +1266,138 @@
 
           {sessions.length === 0 && <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada data sesi kasir</div>}
 
-          {detail && <Modal onClose={() => setDetail(null)} title={`Sesi: ${detail.cashier_name}`}>
-            <div className={`rounded-2xl p-4 mb-5 border ${detail.status === "open" ? 'bg-green-50 border-green-100' : 'bg-gray-50 border-gray-200'}`}>
-              {[{ l: "Status", v: detail.status === "open" ? "🟢 Aktif" : "🔴 Selesai", bold: true }, { l: "Kasir", v: detail.cashier_name, bold: true }, { l: "PIC", v: detail.opened_by || "-" }, { l: "Waktu Buka", v: fmtDate(detail.opened_at) }, { l: "Waktu Tutup", v: detail.closed_at ? fmtDate(detail.closed_at) : "-" }, { l: "Modal Awal", v: fmt(detail.opening_amount || 0), bold: true, color }].map(r => <div key={r.l} className="flex justify-between items-center py-1.5 text-sm">
-                <span className="text-gray-500 font-medium">{r.l}</span>
-                <span className={`${r.bold ? 'font-bold text-gray-800' : 'font-medium text-gray-700'}`} style={r.color ? { color: r.color } : {}}>{r.v}</span>
-              </div>)}
-            </div>
+          {detail && <Modal onClose={() => setDetail(null)} title={`Sesi: ${detail.cashier_name} — ${detail.opened_by || "Kasir"}`}>
+            {(() => {
+              const start = new Date(detail.opened_at || detail.created_at);
+              const end = detail.closed_at ? new Date(detail.closed_at) : new Date();
+              const diffSec = Math.floor((end.getTime() - start.getTime()) / 1000);
+              const h = Math.floor(diffSec / 3600), m = Math.floor((diffSec % 3600) / 60), s = diffSec % 60;
+              const duration = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 
-            {detail.summary && Object.keys(detail.summary).length > 0 && <div className="mb-5">
-              <div className="font-extrabold text-sm text-gray-800 mb-3 uppercase tracking-wider">📊 Ringkasan Penjualan</div>
-              <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm space-y-3">
-                {[{ l: "Total Transaksi", v: detail.summary.total_transactions + " tx" }, { l: "Total Omzet", v: fmt(detail.summary.total_revenue || 0) }, { l: "Cash Masuk", v: fmt(detail.summary.total_cash || 0) }, { l: "Non-Cash", v: fmt(detail.summary.total_non_cash || 0) }].map(r => <div key={r.l} className="flex justify-between items-center text-sm"><span className="text-gray-500 font-medium">{r.l}</span><span className="font-bold text-gray-800">{r.v}</span></div>)}
+              return (
+                <div className="animate-fade-up">
+                  <div className="bg-brandLight rounded-2xl p-5 border border-brand/20 shadow-sm">
+                    <div className="text-[10px] font-black text-brand uppercase tracking-widest mb-4 text-center">Data & Rangkuman Sesi</div>
+                    
+                    <div className="grid grid-cols-2 gap-y-3 gap-x-4 mb-5 pb-5 border-b border-brand/10">
+                      <div>
+                        <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Status</div>
+                        <div className={`text-xs font-black uppercase ${detail.status === "open" ? 'text-green-600' : 'text-gray-500'}`}>{detail.status === "open" ? "● Aktif" : "Selesai"}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">PIC / Dibuka Oleh</div>
+                        <div className="text-xs font-black text-gray-800">{detail.opened_by || "-"}</div>
+                      </div>
+                      {detail.status === "closed" && (
+                        <div className="col-span-2 pt-2 border-t border-brand/5 mt-2 flex justify-between items-center">
+                          <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Ditutup Oleh</div>
+                          <div className="text-xs font-black text-red-600 uppercase">{detail.summary?.closing_cashier || detail.opened_by || "-"}</div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Waktu Buka</div>
+                        <div className="text-[10px] font-bold text-gray-700">{fmtDate(detail.opened_at)}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Waktu Tutup</div>
+                        <div className="text-[10px] font-bold text-gray-700">{detail.closed_at ? fmtDate(detail.closed_at) : "-"}</div>
+                      </div>
+                      <div className="col-span-2 pt-1">
+                        <div className="flex justify-between items-center bg-white/50 px-3 py-2 rounded-lg border border-brand/5">
+                          <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Durasi Sesi</span>
+                          <span className="text-xs font-black text-brand font-mono">{duration}</span>
+                        </div>
+                      </div>
+                    </div>
 
-                <div className="border-t border-dashed border-gray-200 pt-3 mt-3 space-y-3">
-                  <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-medium">Ekspektasi di Laci</span><span className="font-bold text-gray-800">{fmt(detail.summary.expected_cash || 0)}</span></div>
-                  <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-medium">Aktual di Laci</span><span className="font-extrabold text-gray-900">{fmt(detail.summary.closing_amount || 0)}</span></div>
-                  <div className={`flex justify-between items-center text-sm p-2 rounded-lg ${!detail.summary.difference ? 'bg-green-50' : detail.summary.difference > 0 ? 'bg-blue-50' : 'bg-red-50'}`}>
-                    <span className="font-bold text-gray-700">Selisih</span>
-                    <span className={`font-black ${!detail.summary.difference ? 'text-green-600' : detail.summary.difference > 0 ? 'text-blue-600' : 'text-red-600'}`}>{fmt(detail.summary.difference || 0)}</span>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-start text-xs">
+                        <span className="text-gray-500 font-medium">Kasir Terlibat</span>
+                        <span className="font-bold text-gray-800 text-right max-w-[180px] leading-tight">{detail.summary?.involved_cashiers || detail.cashier_name}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500 font-medium">Deposit Awal</span>
+                        <span className="font-bold text-gray-800">{fmt(detail.opening_amount || 0)}</span>
+                      </div>
+                    </div>
+
+                    {detail.summary && Object.keys(detail.summary).length > 0 && (
+                      <>
+                        <div className="mt-5 mb-4 overflow-hidden border border-brand/10 rounded-xl">
+                          <table className="w-full text-[10px] text-left border-collapse">
+                            <thead className="bg-brand/5">
+                              <tr>
+                                <th className="px-3 py-2 font-bold text-brand uppercase tracking-wider">Jenis</th>
+                                <th className="px-3 py-2 font-bold text-brand uppercase tracking-wider text-center">Transaksi</th>
+                                <th className="px-3 py-2 font-bold text-brand uppercase tracking-wider text-right">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-brand/5 bg-white">
+                              <tr>
+                                <td className="px-3 py-2 font-medium text-gray-600">Tunai (Cash)</td>
+                                <td className="px-3 py-2 text-center font-bold text-gray-800">{detail.summary.total_cash_count || '-'}</td>
+                                <td className="px-3 py-2 text-right font-bold text-gray-800">{fmt(detail.summary.total_cash || 0)}</td>
+                              </tr>
+                              <tr>
+                                <td className="px-3 py-2 font-medium text-gray-600">QRIS</td>
+                                <td className="px-3 py-2 text-center font-bold text-gray-800">{detail.summary.total_qris_count || '-'}</td>
+                                <td className="px-3 py-2 text-right font-bold text-gray-800">{fmt(detail.summary.total_qris || 0)}</td>
+                              </tr>
+                              <tr>
+                                <td className="px-3 py-2 font-medium text-gray-600">Transfer</td>
+                                <td className="px-3 py-2 text-center font-bold text-gray-800">{detail.summary.total_transfer_count || '-'}</td>
+                                <td className="px-3 py-2 text-right font-bold text-gray-800">{fmt(detail.summary.total_transfer || 0)}</td>
+                              </tr>
+                            </tbody>
+                            <tfoot className="bg-brand/5 font-black border-t border-brand/10">
+                              <tr>
+                                <td className="px-3 py-2 text-brand">TOTAL</td>
+                                <td className="px-3 py-2 text-center text-brand">{detail.summary.total_transactions}</td>
+                                <td className="px-3 py-2 text-right text-brand">{fmt(detail.summary.total_revenue)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+
+                        <div className="space-y-3 pt-3 border-t border-brand/10">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-gray-600 font-medium uppercase tracking-wider">Ekspektasi Kas (Tunai)</span>
+                            <span className="font-bold text-gray-800">{fmt(detail.summary.expected_cash || 0)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-gray-600 font-medium uppercase tracking-wider">Aktual di Laci</span>
+                            <span className="font-black text-gray-900">{fmt(detail.summary.closing_amount || 0)}</span>
+                          </div>
+                          <div className={`p-3 rounded-xl border ${!detail.summary.difference ? 'bg-green-50 border-green-100' : detail.summary.difference > 0 ? 'bg-blue-50 border-blue-100' : 'bg-red-50 border-red-100'}`}>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="font-bold text-gray-700 text-[10px] uppercase tracking-wider">SELISIH</span>
+                              <span className={`font-black text-sm ${!detail.summary.difference ? 'text-green-600' : detail.summary.difference > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                                {detail.summary.difference === 0 ? "✓ Pas" : (detail.summary.difference > 0 ? "+" : "") + fmt(detail.summary.difference)}
+                              </span>
+                            </div>
+                            {detail.notes_close && (
+                              <div className="mt-2 pt-2 border-t border-black/5 text-[10px] text-gray-600 italic">
+                                <strong>Catatan:</strong> {detail.notes_close}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 mt-5">
+                    {detail.notes_open && <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-xs text-gray-600">
+                      <div className="text-gray-800 font-bold mb-1 flex items-center gap-1.5 uppercase text-[10px] tracking-wider">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                        Catatan Buka:
+                      </div>
+                      {detail.notes_open}
+                    </div>}
                   </div>
                 </div>
-              </div>
-            </div>}
-
-            <div className="space-y-2">
-              {detail.notes_open && <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-xs text-gray-600"><strong className="text-gray-800 block mb-1">📝 Catatan Buka:</strong> {detail.notes_open}</div>}
-              {detail.notes_close && <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-xs text-gray-600"><strong className="text-gray-800 block mb-1">📝 Catatan Tutup:</strong> {detail.notes_close}</div>}
-            </div>
+              );
+            })()}
           </Modal>}
         </div>
       );
@@ -1027,17 +1457,30 @@
         setSaving(false);
       };
 
-      const tabs = [{ id: "kasir", label: "🧾 Kasir" }, { id: "pin", label: "🔐 PIN Akses" }, { id: "toko", label: "🏪 Info Toko" }, { id: "struk", label: "🖨️ Desain Struk" }];
-      if (role === "owner") tabs.push({ id: "reset", label: "🧨 Reset Data" });
+      const tabs = [
+        { id: "kasir", label: "Kasir", path: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" }, 
+        { id: "pin", label: "PIN", path: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" }, 
+        { id: "toko", label: "Toko", path: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" }, 
+        { id: "struk", label: "Struk", path: "M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" }
+      ];
+      if (role === "owner") tabs.push({ id: "reset", label: "Reset", path: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" });
 
       return (
         <div className="p-4">
           <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
-            {tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-sm border ${tab === t.id ? 'bg-dark text-white border-dark' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>{t.label}</button>)}
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all shadow-sm border whitespace-nowrap ${tab === t.id ? 'bg-dark text-white border-dark' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d={t.path}/></svg>
+                {t.label}
+              </button>
+            ))}
           </div>
 
           {tab === "kasir" && <div className="animate-fade-up">
-            <button onClick={() => { setCModal("add"); setCForm({ code: "", name: "" }); }} className="w-full bg-dark text-white font-bold rounded-xl py-3.5 mb-5 shadow-sm hover:bg-gray-900 transition-colors flex items-center justify-center gap-2">+ Tambah Akun Kasir</button>
+            <button onClick={() => { setCModal("add"); setCForm({ code: "", name: "" }); }} className="w-full bg-dark text-white font-black uppercase tracking-wider rounded-xl py-4 mb-6 shadow-md hover:bg-gray-900 transition-all flex items-center justify-center gap-2 text-xs">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 5v14M5 12h14"/></svg>
+              Tambah Akun Kasir
+            </button>
 
             {cashiers.length === 0 && <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada kasir terdaftar</div>}
 
@@ -1056,7 +1499,9 @@
                 <div className="flex gap-2 border-t border-gray-50 pt-3">
                   <button onClick={() => { setCModal(c.id); setCForm({ code: c.code, name: c.name }); }} className="flex-1 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold transition-colors border border-gray-200">Edit</button>
                   <button onClick={() => toggleCashier(c)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border ${c.active ? 'bg-red-50 text-red-600 border-red-100 hover:bg-red-100' : 'bg-brandLight text-brand border-brand/20 hover:bg-brand/10'}`}>{c.active ? "Matikan" : "Aktifkan"}</button>
-                  <button onClick={() => delCashier(c.id)} className="w-12 py-2 bg-red-50 hover:bg-red-100 text-red-500 rounded-lg text-xs font-bold transition-colors border border-red-100 flex justify-center items-center">🗑️</button>
+                  <button onClick={() => delCashier(c.id)} className="w-12 py-2 bg-red-50 hover:bg-red-100 text-red-500 rounded-lg text-xs font-bold transition-colors border border-red-100 flex justify-center items-center">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  </button>
                 </div>
               </div>)}
             </div>
