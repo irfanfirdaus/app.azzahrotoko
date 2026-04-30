@@ -117,7 +117,7 @@
       return { discountTotal: disc, appliedPromos: applied };
     };
 
-    function PinPad({ onSuccess, cashiers, settings }) {
+    function PinPad({ onSuccess, cashiers, settings, notify }) {
       const [pin, setPin] = useState("");
       const [shake, setShake] = useState(false);
       const [loading, setLoading] = useState(false);
@@ -249,36 +249,16 @@
     }
 
     function AddCustomerModal({ onClose, onSave, notify }) {
-      const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" });
-      const [saving, setSaving] = useState(false);
-
-      const handleSave = async () => {
-        if (!form.name || !form.phone) return notify("Nama & HP wajib diisi!");
-        setSaving(true);
-        const payload = { name: form.name, phone: form.phone, email: form.email, address: form.address, city: form.city, birthdate: form.birthdate || null, gender: form.gender, notes: form.notes };
-        const { data, error } = await db.from("customers").insert(payload).select().single();
-        setSaving(false);
-        if (error) return notify("Gagal: " + error.message);
-        notify("Pelanggan berhasil ditambahkan!");
-        onSave(data);
-      };
-
       return (
-        <Modal onClose={onClose} title="Tambah Pelanggan Baru">
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Jenis Kelamin</label>
-              <div className="flex gap-2">
-                {["Laki-laki", "Perempuan", "—"].map(g => <button key={g} onClick={() => setForm(f => ({ ...f, gender: g === "—" ? "" : g }))} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors border-2 ${form.gender === (g === "—" ? "" : g) ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{g}</button>)}
-              </div>
-            </div>
-            {[{ label: "Nama Lengkap *", key: "name", ph: "Sesuai KTP" }, { label: "No. HP / WA *", key: "phone", ph: "08xxxxxxxxxx", type: "tel" }, { label: "Email", key: "email", ph: "email@domain.com", type: "email" }, { label: "Alamat", key: "address", ph: "Alamat domisili" }, { label: "Kota", key: "city", ph: "cth: Semarang" }, { label: "Tgl Lahir", key: "birthdate", type: "date", ph: "" }, { label: "Catatan", key: "notes", ph: "Alergi / referensi..." }].map(f => <div key={f.key}>
-              <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
-              <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-            </div>)}
-            <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
-              <button onClick={onClose} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex-[2] py-3.5 bg-brand hover:bg-brand/90 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Data"}</button>
+        <Modal onClose={onClose} title="Tambah Pelanggan Baru" full>
+          <div className="h-full flex flex-col">
+            <iframe 
+              src="daftar.html" 
+              className="w-full flex-1 border-0 rounded-xl" 
+              title="Daftar Member"
+            />
+            <div className="p-4 text-center text-[10px] text-gray-400 font-medium">
+              Tutup modal ini setelah pendaftaran selesai jika tidak tertutup otomatis.
             </div>
           </div>
         </Modal>
@@ -566,12 +546,17 @@
       const [txData, setTxData] = useState(null);
       const [variantPicker, setVariantPicker] = useState(null);
       const [showAddCustomer, setShowAddCustomer] = useState(false);
+      const [notes, setNotes] = useState("");
       const [loading, setLoading] = useState(true);
-      const [showCart, setShowCart] = useState(false);
-      const [paymentStatus, setPaymentStatus] = useState("Completed");
-      const [sessionTxs, setSessionTxs] = useState([]);
       const [showSessionTxs, setShowSessionTxs] = useState(false);
-      const CATS = settings?.product_categories ? ["Semua", ...settings.product_categories.split(",").map(c => c.trim()).filter(Boolean)] : CATS_DEFAULT;
+      const [sessionTxs, setSessionTxs] = useState([]);
+      const [showCart, setShowCart] = useState(false);
+      const [pointsRedeemed, setPointsRedeemed] = useState(0);
+      const [showRedeem, setShowRedeem] = useState(false);
+      const [etalase, setEtalase] = useState("Semua Etalase");
+      const [onlineOrders, setOnlineOrders] = useState([]);
+      const CATS = settings?.product_categories ? ["Semua Produk", ...settings.product_categories.split(",").map(c => c.trim()).filter(Boolean)] : ["Semua Produk", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
+      const ETALASE_LIST = settings?.product_etalase ? ["Semua Etalase", ...settings.product_etalase.split(",").map(c => c.trim()).filter(Boolean)] : ["Semua Etalase"];
 
       const loadAll = useCallback(async () => {
         setLoading(true);
@@ -590,8 +575,31 @@
         const { data } = await db.from("transactions").select("*").eq("session_id", user.session_id).order("created_at", { ascending: false });
         setSessionTxs(data || []);
       };
+
+      const loadOnlineOrders = async () => {
+        try {
+          const { data } = await db.from("online_orders").select("*").eq("status", "pending").order("created_at", { ascending: true });
+          setOnlineOrders(data || []);
+        } catch(e) { console.error("Error loading online orders", e); }
+      };
       
-      useEffect(() => { loadAll(); loadSessionTxs(); }, [loadAll]);
+      useEffect(() => { loadAll(); loadSessionTxs(); loadOnlineOrders(); }, [loadAll]);
+
+      useEffect(() => {
+        const handleMessage = (e) => {
+          if (e.data?.type === 'CUSTOMER_ADDED') {
+            const newCust = e.data.customer;
+            setCustomers(prev => {
+              if (prev.find(c => c.id === newCust.id)) return prev;
+              return [...prev, newCust].sort((a,b) => a.name.localeCompare(b.name));
+            });
+            setCustomer(newCust.id);
+            setTimeout(() => setShowAddCustomer(false), 2000);
+          }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+      }, []);
 
       const grouped = useMemo(() => {
         const map = {};
@@ -609,18 +617,25 @@
             map[key] = { ...p, variants: vars };
           }
         });
-        return Object.values(map);
+        return Object.values(map).map(p => {
+          if (p.variants && p.variants.length > 0) {
+            const totalStock = p.variants.reduce((sum, v) => sum + (v.stock || 0), 0);
+            return { ...p, stock: totalStock };
+          }
+          return p;
+        });
       }, [products]);
 
       const filtered = useMemo(() => {
         const s = search.toLowerCase();
-        return grouped.filter(p => (cat === "Semua" || p.category === cat) && (p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s) || (p.brand || "").toLowerCase().includes(s)));
-      }, [grouped, search, cat]);
+        return grouped.filter(p => (cat === "Semua Produk" || cat === "Semua" || p.category === cat) && (etalase === "Semua Etalase" || p.etalase === etalase) && (p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s) || (p.brand || "").toLowerCase().includes(s)));
+      }, [grouped, search, cat, etalase]);
 
       const addFinal = (item) => {
         if ((item.stock || 0) <= 0) return notify("Stok habis!");
         const ckey = item.sku;
-        const price = item.price;
+        const normalPrice = item.price;
+        const price = (item.promo_price && item.promo_price > 0) ? item.promo_price : item.price;
         const name = item.name;
         const vName = item.variant_name || null;
         const itemStock = item.stock || 0;
@@ -628,7 +643,7 @@
           const ex = prev.find(x => x.ckey === ckey);
           const currQty = ex ? ex.qty : 0;
           if (currQty + 1 > itemStock) { notify(`Stok ${name} sisa ${itemStock}`); return prev; }
-          return ex ? prev.map(x => x.ckey === ckey ? { ...x, qty: x.qty + 1 } : x) : [...prev, { id: item.id, sku: item.sku, name, vName, price, qty: 1, ckey, stock: itemStock }];
+          return ex ? prev.map(x => x.ckey === ckey ? { ...x, qty: x.qty + 1 } : x) : [...prev, { id: item.id, sku: item.sku, name, vName, normalPrice, price, qty: 1, ckey, stock: itemStock }];
         });
         setVariantPicker(null);
       };
@@ -644,11 +659,16 @@
       };
       const remItem = ckey => setCart(p => p.filter(x => x.ckey !== ckey));
 
-      const subtotal = cart.reduce((s, x) => s + x.price * x.qty, 0);
+      const subtotal = cart.reduce((s, x) => s + (Number(x.normalPrice || x.price) || 0) * x.qty, 0);
+      const productDiscount = cart.reduce((s, x) => s + (Math.max(0, Number(x.normalPrice || x.price) - Number(x.price || 0))) * x.qty, 0);
       const { discountTotal, appliedPromos } = applyPromos(cart, promos);
-      const total = Math.max(0, subtotal - discountTotal);
+      const pointsDiscount = (Number(pointsRedeemed) || 0) * 100;
+      const total = Math.max(0, subtotal - productDiscount - discountTotal - pointsDiscount);
+      const pointsEarned = Math.floor(total / 10000) * (parseInt(settings?.points_per_10k) || 1);
+      const selectedCustomer = useMemo(() => customers.find(c => String(c.id) === String(customer)), [customer, customers]);
 
       const processTx = async () => {
+        if (!servedBy) return notify("Pilih kasir terlebih dahulu!");
         if (cart.length === 0) return notify("Keranjang kosong!");
         if (txType === "Cash" && parseFloat(cash) < total) return notify("Uang kurang!");
         setModal("loading");
@@ -662,16 +682,19 @@
                          String(now.getSeconds()).padStart(2, '0');
         const txCode = `TX${dateCode}${timeCode}`;
 
-        const cust = customers.find(c => String(c.id) === String(customer));
+        const cust = selectedCustomer;
         const servedName = servedBy || user.name;
         const payload = {
           session_id: user.session_id, cashier_id: user.cashier_id, cashier_name: servedName,
           customer_id: cust?.id || null, customer_name: cust?.name || null,
-          subtotal, discount_total: discountTotal, total,
+          subtotal, discount_total: discountTotal + pointsDiscount, total,
           pay_method: txType, cash_received: txType === "Cash" ? parseFloat(cash) : total,
           change_amount: txType === "Cash" ? parseFloat(cash) - total : 0,
           applied_promos: appliedPromos,
-          tx_code: txCode
+          tx_code: txCode,
+          points_earned: pointsEarned,
+          points_redeemed: pointsRedeemed,
+          notes_tx: notes
         };
 
         const { data: tx, error: err1 } = await db.from("transactions").insert(payload).select().single();
@@ -689,8 +712,25 @@
           await db.rpc("decrement_stock_by_sku", { p_sku: item.sku, p_qty: item.qty });
         }
 
-        setTxData({ ...tx, items });
-        setCart([]); setCash(""); setCustomer(""); setTxType("Cash"); setServedBy("");
+        // Update poin pelanggan
+        if (cust) {
+          try {
+            if (pointsEarned > 0) {
+              const { error: e1 } = await db.rpc('add_customer_points', { p_customer_id: cust.id, p_points: pointsEarned, p_type: 'earn', p_note: `Transaksi ${txCode}`, p_transaction_id: tx.id });
+              if (e1) { console.error("Error earn points:", e1); notify("Gagal simpan poin: " + e1.message); }
+            }
+            if (pointsRedeemed > 0) {
+              const { error: e2 } = await db.rpc('add_customer_points', { p_customer_id: cust.id, p_points: -pointsRedeemed, p_type: 'redeem', p_note: `Redeem di ${txCode}`, p_transaction_id: tx.id });
+              if (e2) { console.error("Error redeem points:", e2); notify("Gagal redeem poin: " + e2.message); }
+            }
+          } catch(pe) {
+            console.error("Critical point error:", pe);
+            notify("Kritikal error poin: " + pe.message);
+          }
+        }
+
+        setTxData({ ...tx, items, points_earned: pointsEarned, points_balance: (cust?.points || 0) - pointsRedeemed + pointsEarned });
+        setCart([]); setCash(""); setCustomer(""); setTxType("Cash"); setServedBy(""); setPointsRedeemed(0); setNotes("");
         loadAll();
         loadSessionTxs();
         setModal("receipt");
@@ -738,6 +778,30 @@
           notify("Gagal: " + e.message);
           setModal(null);
         }
+      };
+
+      const processOnlineOrder = async (order) => {
+        try {
+          const rawItems = order.items_json || [];
+          const itemsWithPrices = rawItems.map(x => ({
+            ...x,
+            normalPrice: x.normalPrice || x.price || 0,
+            price: x.price || 0
+          }));
+          setCart(itemsWithPrices);
+          if (order.customer_type === "Member" && order.customer_id_input) {
+            const idInput = order.customer_id_input.toLowerCase();
+            const cust = customers.find(c => (c.phone || "").includes(idInput) || (c.customer_code || "").toLowerCase() === idInput);
+            if (cust) setCustomer(cust.id);
+          } else {
+            setCustomer("");
+          }
+          setNotes(`Order ID: ${order.order_code}\nNama: ${order.customer_name} (${order.customer_type})\nID/HP: ${order.customer_id_input || '-'}\nPengiriman: ${order.shipping_method}\n\n${order.notes || ""}`);
+          setModal(null);
+          await db.from("online_orders").update({ status: "processed" }).eq("id", order.id);
+          loadOnlineOrders();
+          notify("Pesanan dimuat ke keranjang!");
+        } catch(e) { console.error(e); notify("Gagal proses pesanan"); }
       };
       const confirmClose = async (actCash, notes, closingCashier) => {
         const prevModal = { ...modal };
@@ -822,6 +886,11 @@
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
                   <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari..." className="pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 w-full md:w-64 transition-all" style={{ '--tw-ring-color': color }} />
                 </div>
+                <button onClick={() => { loadOnlineOrders(); setModal("onlineOrders"); }} className="relative p-2.5 bg-blue-50 text-blue-600 rounded-xl font-bold border border-blue-100 hover:bg-blue-100 transition-all flex items-center gap-1.5 text-xs" title="Pesanan Online">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                  <span className="hidden sm:inline">Pesanan Online</span>
+                  {onlineOrders.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[8px] font-black rounded-full flex items-center justify-center">{onlineOrders.length}</span>}
+                </button>
                 <button onClick={() => { loadSessionTxs(); setShowSessionTxs(true); }} className="relative p-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold border border-gray-200 hover:bg-gray-200 transition-all flex items-center gap-1.5 text-xs" title="Laporan Sesi">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
                   <span className="hidden sm:inline">Laporan</span>
@@ -837,8 +906,15 @@
               </div>
             </div>
 
-            <div className="flex px-4 py-3 gap-2 overflow-x-auto no-scrollbar border-b border-gray-50 shrink-0 shadow-sm z-10 bg-white">
-              {CATS.map(c => <button key={c} onClick={() => setCat(c)} className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${cat === c ? 'text-white shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`} style={cat === c ? { background: color, borderColor: color } : {}}>{c}</button>)}
+            <div className="flex flex-col border-b border-gray-50 shrink-0 shadow-sm z-10 bg-white">
+              <div className="flex px-4 py-2.5 gap-2 overflow-x-auto no-scrollbar items-center">
+                <span className="text-[10px] font-bold text-gray-400 uppercase mr-2 tracking-wider">Etalase:</span>
+                {ETALASE_LIST.map(c => <button key={c} onClick={() => setEtalase(c)} className={`px-3 py-1 rounded-full text-[11px] font-bold whitespace-nowrap transition-all border ${etalase === c ? 'text-white shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`} style={etalase === c ? { background: color, borderColor: color } : {}}>{c}</button>)}
+              </div>
+              <div className="flex px-4 py-2.5 gap-2 overflow-x-auto no-scrollbar items-center bg-gray-50/50">
+                <span className="text-[10px] font-bold text-gray-400 uppercase mr-2 tracking-wider">Jenis:</span>
+                {CATS.map(c => <button key={c} onClick={() => setCat(c)} className={`px-3 py-1 rounded-full text-[11px] font-bold whitespace-nowrap transition-all border ${cat === c ? 'text-white shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`} style={cat === c ? { background: color, borderColor: color } : {}}>{c}</button>)}
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 bg-grayLight">
@@ -849,11 +925,21 @@
                       <img src={p.image_url || `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" onError={e => e.target.src = `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} />
                       {(p.stock || 0) <= 0 && <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-[10px] tracking-widest backdrop-blur-[1px]">HABIS</div>}
                       {p.variants?.length > 0 && <div className="absolute top-1 right-1 bg-blue-500/90 text-white rounded-md px-1.5 py-0.5 text-[8px] font-bold shadow-sm">VAR</div>}
+                      {p.is_po && <div className={`absolute top-1 ${p.variants?.length > 0 ? 'right-7' : 'right-1'} bg-purple-500/90 text-white rounded-md px-1.5 py-0.5 text-[8px] font-bold shadow-sm`}>PO</div>}
                     </div>
                     <div className="text-[9px] text-gray-400 font-mono mb-0.5 uppercase tracking-wider truncate">{p.sku}</div>
                     <div className="font-bold text-gray-800 text-xs leading-tight mb-1 line-clamp-2 group-hover:text-brand transition-colors">{p.name}</div>
                     <div className="mt-auto flex justify-between items-end">
-                      <div className="font-extrabold text-[13px]" style={{ color }}>{fmt(p.price)}</div>
+                      <div className="flex flex-col">
+                        {(p.promo_price && p.promo_price > 0) ? (
+                          <>
+                            <div className="font-extrabold text-[13px] text-orange-600">{fmt(p.promo_price)}</div>
+                            <div className="text-[9px] text-gray-400 line-through">{fmt(p.price)}</div>
+                          </>
+                        ) : (
+                          <div className="font-extrabold text-[13px]" style={{ color }}>{fmt(p.price)}</div>
+                        )}
+                      </div>
                       <div className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.stock <= 5 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{p.stock}</div>
                     </div>
                   </div>)}
@@ -863,8 +949,8 @@
 
           {/* KANAN - Keranjang */}
           <div className={`flex-[1.5] lg:flex-1 bg-white border-l border-gray-200 flex flex-col shadow-[-4px_0_20px_rgba(0,0,0,0.03)] z-[100] ${showCart ? 'fixed inset-0' : 'hidden md:flex'}`}>
-            <div className="p-4 border-b border-gray-100 bg-gray-50">
-              <div className="flex items-center justify-between mb-3">
+            <div className="p-4 border-b border-gray-100 bg-gray-50 space-y-3">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <button onClick={() => setShowCart(false)} className="md:hidden p-2 bg-white border border-gray-200 rounded-xl mr-1 font-bold flex items-center justify-center">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5M5 12l7-7M5 12l7 7"/></svg>
@@ -876,23 +962,53 @@
                 </div>
                 <button onClick={() => setCart([])} disabled={cart.length === 0} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded-lg transition-colors disabled:opacity-30">Hapus Semua</button>
               </div>
-              <div className="flex gap-2">
-                <select value={customer} onChange={e => setCustomer(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30 shadow-sm text-gray-700">
-                  <option value="">-- Umum (Tanpa Nama) --</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <button onClick={() => setShowAddCustomer(true)} className="px-3 py-2 bg-brandLight text-brand hover:bg-brand/20 border border-brand/20 rounded-xl font-bold text-xs transition-colors shadow-sm flex items-center gap-1 shrink-0">
-                  <span>+</span> Baru
-                </button>
-              </div>
-              <div className="flex gap-2 mt-2">
-                <select value={servedBy} onChange={e => setServedBy(e.target.value)} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30 shadow-sm text-gray-700">
-                  <option value="">-- Melayani: {user.name} --</option>
+
+              {/* 1. Nama Kasir */}
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Nama Kasir *</label>
+                <select value={servedBy} onChange={e => setServedBy(e.target.value)} className={`w-full px-3 py-2 bg-white border rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 shadow-sm ${!servedBy ? 'border-orange-300 ring-2 ring-orange-100' : 'border-gray-200 focus:ring-brand/30'}`}>
+                  <option value="">-- Pilih Kasir --</option>
                   {cashiers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
+
+              {/* 2. Nama Pelanggan */}
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Nama Pelanggan (Cari: Nama/HP/ID)</label>
+                <div className="flex gap-2">
+                  <div className="flex-1 relative">
+                    <input list="customer-list" value={customers.find(c => String(c.id) === String(customer))?.name || ""} onChange={e => {
+                      const val = e.target.value;
+                      const found = customers.find(c => c.name === val || `${c.name} (${c.phone || ''}) - [${c.customer_code || c.id}]` === val);
+                      if (found) { setCustomer(found.id); setPointsRedeemed(0); }
+                      else if (val === "") { setCustomer(""); setPointsRedeemed(0); }
+                    }} placeholder="Cari Pelanggan..." className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30 shadow-sm text-gray-700" />
+                    <datalist id="customer-list">
+                      {customers.map(c => <option key={c.id} value={`${c.name} (${c.phone || ''}) - [${c.customer_code || c.id}]`} />)}
+                    </datalist>
+                  </div>
+                  <button onClick={() => setShowAddCustomer(true)} className="px-3 py-2 bg-brandLight text-brand hover:bg-brand/20 border border-brand/20 rounded-xl font-bold text-xs transition-colors shadow-sm flex items-center gap-1 shrink-0">
+                    <span>+</span> Baru
+                  </button>
+                </div>
+                {selectedCustomer && (
+                  <div className="mt-2 flex items-center justify-between bg-brandLight/50 p-2 rounded-xl border border-brand/10">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-lg">⭐</span>
+                      <div>
+                        <div className="text-[10px] font-bold text-brand/60 uppercase leading-none">Poin Pelanggan</div>
+                        <div className="text-xs font-black text-brand">{selectedCustomer.points || 0} Poin</div>
+                      </div>
+                    </div>
+                    {selectedCustomer.points >= 10 && (
+                      <button onClick={() => setShowRedeem(true)} className="px-2 py-1 bg-brand text-white text-[10px] font-bold rounded-lg shadow-sm">Redeem</button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
+            {/* 3. Keranjang Belanja */}
             <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-grayLight">
               {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60"><svg className="mb-4 opacity-50" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg><p className="font-medium">Belum ada pesanan</p></div> :
                 cart.map(x => <div key={x.ckey} className="bg-white rounded-xl p-3 border border-gray-100 shadow-sm relative overflow-hidden group">
@@ -914,6 +1030,13 @@
                 </div>)}
             </div>
 
+            {/* 4. Catatan */}
+            <div className="px-4 py-2 bg-white border-t border-gray-50">
+              <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Catatan Transaksi</label>
+              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={1} placeholder="cth: Bungkus kado, dsb..." className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+            </div>
+
+            {/* 5. Subtotal dan Pembayaran */}
             <div className="p-4 bg-white border-t border-gray-100 shadow-[0_-10px_20px_rgba(0,0,0,0.02)] z-10 relative">
               {appliedPromos.length > 0 && <div className="bg-green-50 rounded-xl p-2 mb-3 border border-green-100/50">
                 {appliedPromos.map((p, i) => <div key={i} className="flex justify-between text-[10px] font-bold text-green-700"><span className="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>{p.name}</span><span>-{fmt(p.discount)}</span></div>)}
@@ -921,45 +1044,30 @@
               <div className="flex justify-between items-center mb-1">
                 <span className="text-xs font-semibold text-gray-500">Subtotal</span><span className="font-bold text-gray-800 text-sm">{fmt(subtotal)}</span>
               </div>
-              {discountTotal > 0 && <div className="flex justify-between items-center mb-1 text-red-500">
-                <span className="text-xs font-bold">Diskon Promo</span><span className="font-bold text-sm">-{fmt(discountTotal)}</span>
+              {productDiscount > 0 && <div className="flex justify-between items-center mb-1 text-green-600">
+                <span className="text-xs font-bold italic">Diskon Produk</span><span className="font-bold text-sm">-{fmt(productDiscount)}</span>
               </div>}
-              <div className="flex justify-between items-end mt-2 pt-2 border-t border-dashed border-gray-200 mb-4">
-                <span className="text-sm font-extrabold uppercase tracking-wider text-gray-800">Total</span><span className="text-3xl font-black leading-none" style={{ color }}>{fmt(total)}</span>
+              {discountTotal > 0 && <div className="flex justify-between items-center mb-1 text-green-600">
+                <span className="text-xs font-bold italic">Diskon Promo</span><span className="font-bold text-sm">-{fmt(discountTotal)}</span>
+              </div>}
+              {pointsRedeemed > 0 && <div className="flex justify-between items-center mb-1 text-orange-600">
+                <span className="text-xs font-bold italic">Redeem Poin {pointsRedeemed}</span><span className="font-bold text-sm">-{fmt(pointsDiscount)}</span>
+              </div>}
+              <div className="flex justify-between items-center mt-2 pt-2 border-t border-dashed border-gray-200 mb-3">
+                <span className="text-sm font-extrabold uppercase tracking-wider text-gray-800">Total</span><span className="text-xl font-black" style={{ color }}>{fmt(total)}</span>
               </div>
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {PAY_METHODS.map(m => <button key={m} onClick={() => setTxType(m)} className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${txType === m ? 'border-dark bg-dark text-white' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200 hover:bg-gray-50'}`}>{m}</button>)}
-              </div>
-              {txType === "Cash" && <div className="mb-4">
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {[50000, 100000, total].map(n => <button key={n} onClick={() => setCash(n)} className="px-2.5 py-1.5 bg-brandLight text-brand rounded-lg text-xs font-bold border border-brand/20 hover:bg-brand hover:text-white transition-colors">{fmt(n)}</button>)}
+              {pointsEarned > 0 && (
+                <div className="mb-3 text-center bg-brand/5 py-1.5 rounded-lg border border-brand/10">
+                   <span className="text-[10px] font-bold text-brand uppercase tracking-widest">+ Dapat {pointsEarned} Poin</span>
                 </div>
-                <input value={cash} onChange={e => setCash(e.target.value)} type="number" inputMode="numeric" placeholder="Nominal Uang Tunai" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 text-brand text-right shadow-inner" style={{ '--tw-ring-color': color }} />
-                {parseFloat(cash) >= total && <div className="mt-2 flex justify-between bg-orange-50 text-orange-600 p-2.5 rounded-xl border border-orange-100 text-xs font-bold"><span>Kembalian:</span><span className="text-sm font-black">{fmt(parseFloat(cash) - total)}</span></div>}
-              </div>}
-              <button onClick={processTx} disabled={cart.length === 0} className="w-full py-4 bg-brand hover:bg-brand/90 text-white rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-                Proses Pembayaran
+              )}
+              <button onClick={() => setModal("confirmTx")} disabled={cart.length === 0 || !servedBy} className="w-full py-4 bg-brand hover:bg-brand/90 text-white rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">
+                Lanjutkan
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
               </button>
               {txData && (
-                <div className="grid grid-cols-3 gap-2 mt-2">
-                  <button onClick={() => window.print()} className="py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-all border border-gray-200 flex items-center justify-center gap-1">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                    Cetak
-                  </button>
-                  <button onClick={() => {
-                    const items = (txData.items||[]).map(i=>`${i.name}${i.variant_name?` (${i.variant_name})`:''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
-                    const text = `*${(settings?.store_name||'Toko Azzahro').toUpperCase()}*\nNo: ${txData.tx_code}\nKasir: ${txData.cashier_name}\nTgl: ${new Date().toLocaleDateString('id-ID')}\n\n${items}\n\nTotal: ${fmt(txData.total)}\nBayar: ${txData.pay_method}\n\n${settings?.store_footer||'Terima kasih!'}`;
-                    const phone = txData.customer_id ? customers.find(c=>c.id===txData.customer_id)?.phone : null;
-                    window.open(`https://wa.me/${phone?phone.replace(/[^0-9]/g,''):''}?text=${encodeURIComponent(text)}`);
-                  }} className="py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-1">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                    WA
-                  </button>
-                  <button onClick={async () => { try { await navigator.share({ title: 'Nota', text: `Nota #${txData.tx_code} - ${fmt(txData.total)}` }); } catch(e) {} }} className="py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-1">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                    Bagikan
-                  </button>
+                <div className="mt-2 text-center bg-green-50 py-2 rounded-xl border border-green-100 text-[10px] font-bold text-green-700 animate-fade-in">
+                  Transaksi #{txData.tx_code} Selesai
                 </div>
               )}
             </div>
@@ -980,7 +1088,16 @@
                   {v.sku && <div className="text-[10px] text-gray-400 font-mono">SKU: {v.sku}</div>}
                   <div className="text-[10px] text-gray-500 font-medium">Stok: {v.stock}</div>
                 </div></div>
-                <span className="font-black" style={{ color }}>{fmt(v.price)}</span>
+                <div className="flex flex-col items-end">
+                  {(v.promo_price && v.promo_price > 0) ? (
+                    <>
+                      <span className="font-black text-orange-600">{fmt(v.promo_price)}</span>
+                      <span className="text-[10px] text-gray-400 line-through">{fmt(v.price)}</span>
+                    </>
+                  ) : (
+                    <span className="font-black" style={{ color }}>{fmt(v.price)}</span>
+                  )}
+                </div>
               </button>)}
             </div>
           </Modal>}
@@ -1005,8 +1122,16 @@
               </div>
               <div className="border-t border-dashed border-gray-400 py-1">
                 <div className="flex justify-between font-bold"><span>TOTAL</span><span>{fmt(txData.total)}</span></div>
+                {txData.discount_total > 0 && <div className="flex justify-between text-[9px]"><span>DISKON</span><span>-{fmt(txData.discount_total)}</span></div>}
                 {txData.pay_method === "Cash" && <><div className="flex justify-between"><span>TUNAI</span><span>{fmt(txData.cash_received)}</span></div><div className="flex justify-between"><span>KEMBALI</span><span>{fmt(txData.change_amount)}</span></div></>}
               </div>
+              {(txData.points_earned > 0 || txData.points_redeemed > 0) && (
+                <div className="border-t border-dotted border-gray-400 py-1 text-center text-[9px]">
+                   {txData.points_earned > 0 && <div>+ Untung {txData.points_earned} Poin</div>}
+                   {txData.points_redeemed > 0 && <div>- Tukar {txData.points_redeemed} Poin</div>}
+                   <div className="font-bold mt-0.5">Sisa Saldo Poin: {txData.points_balance || 0}</div>
+                </div>
+              )}
               <div className="text-center mt-3 pt-2 border-t border-gray-400">{settings?.store_footer || "Terima Kasih"}</div>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-5">
@@ -1041,7 +1166,192 @@
             <CloseSessionForm modal={modal} onSubmit={confirmClose} fmt={fmt} color={color} cashiers={cashiers} />
           </Modal>}
 
+          {modal === "confirmTx" && (
+            <Modal onClose={() => setModal(null)} title="Konfirmasi Pembayaran">
+              <div className="space-y-4 max-h-[85vh] flex flex-col">
+                <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between items-center">
+                    <span>Ringkasan Belanja</span>
+                    <span className="bg-gray-100 px-2 py-0.5 rounded-full">{cart.length} Item</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {cart.map((item, i) => (
+                      <div key={i} className="flex justify-between items-start text-xs bg-gray-50/50 p-2 rounded-xl border border-gray-50">
+                        <div className="flex-1 min-w-0 pr-2">
+                          <div className="font-bold text-gray-800 truncate">{item.name}</div>
+                          {item.vName && <div className="text-[10px] text-gray-400 italic">{item.vName}</div>}
+                          <div className="text-[10px] text-gray-500 font-medium">{item.qty} x {fmt(item.price)}</div>
+                        </div>
+                        <div className="font-black text-gray-700 shrink-0">{fmt(item.price * item.qty)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-brand/5 p-4 rounded-2xl border border-brand/10 space-y-1.5 shrink-0">
+                  <div className="flex justify-between text-xs font-bold text-gray-500">
+                    <span>Subtotal</span>
+                    <span>{fmt(subtotal)}</span>
+                  </div>
+                  {productDiscount > 0 && (
+                    <div className="flex justify-between text-xs font-bold text-green-600">
+                      <span>Diskon Produk</span>
+                      <span>-{fmt(productDiscount)}</span>
+                    </div>
+                  )}
+                  {discountTotal > 0 && (
+                    <div className="flex justify-between text-xs font-bold text-green-600">
+                      <span>Diskon Promo</span>
+                      <span>-{fmt(discountTotal)}</span>
+                    </div>
+                  )}
+                  {pointsRedeemed > 0 && (
+                    <div className="flex justify-between text-xs font-bold text-orange-600">
+                      <span>Redeem Poin {pointsRedeemed}</span>
+                      <span>-{fmt(pointsDiscount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-xl font-black text-brand pt-2 border-t border-brand/20 mt-1">
+                    <span>TOTAL</span>
+                    <span>{fmt(total)}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 shrink-0">
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Metode Pembayaran</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {PAY_METHODS.map(m => <button key={m} onClick={() => setTxType(m)} className={`py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${txType === m ? 'border-brand bg-brand text-white shadow-md' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200 hover:bg-gray-50'}`}>{m}</button>)}
+                  </div>
+                  
+                  {txType === "Cash" && (
+                    <div className="animate-fade-in bg-orange-50/50 p-3 rounded-2xl border border-orange-100/50">
+                      <div className="flex flex-wrap gap-1.5 mb-2.5">
+                        {[50000, 100000, total].map(n => <button key={n} onClick={() => setCash(n)} className="px-3 py-1.5 bg-white text-brand rounded-lg text-[10px] font-black border border-brand/10 hover:bg-brand hover:text-white transition-all shadow-sm">{fmt(n)}</button>)}
+                      </div>
+                      <input value={cash} onChange={e => setCash(e.target.value)} type="number" inputMode="numeric" placeholder="Nominal Uang" className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-lg focus:outline-none focus:ring-2 text-brand text-left shadow-inner" style={{ '--tw-ring-color': color }} />
+                      {parseFloat(cash) >= total && (
+                        <div className="mt-2.5 flex justify-between bg-white text-orange-600 p-3 rounded-xl border border-orange-100 text-xs font-bold shadow-sm">
+                          <span>KEMBALIAN:</span>
+                          <span className="text-base font-black">{fmt(parseFloat(cash) - total)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 shrink-0">
+                  <button onClick={() => window.print()} className="py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-xl font-bold text-[10px] border border-gray-200 flex flex-col items-center justify-center gap-1 transition-all">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Preview
+                  </button>
+                  <button onClick={() => {
+                    const itemsText = cart.map(i => `${i.name}: ${i.qty}x ${fmt(i.price)}`).join('\n');
+                    const text = `*PREVIEW NOTA*\n${itemsText}\n\nTotal: ${fmt(total)}`;
+                    const phone = selectedCustomer?.phone;
+                    window.open(`https://wa.me/${phone ? phone.replace(/[^0-9]/g,'') : ''}?text=${encodeURIComponent(text)}`);
+                  }} className="py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-xl font-bold text-[10px] border border-gray-200 flex flex-col items-center justify-center gap-1 transition-all">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                    WA Preview
+                  </button>
+                  <button onClick={async () => {
+                    try { await navigator.share({ title: 'Preview Nota', text: `Total: ${fmt(total)}` }); } catch(e) {}
+                  }} className="py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-xl font-bold text-[10px] border border-gray-200 flex flex-col items-center justify-center gap-1 transition-all">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    Bagikan
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-3 pt-2 shrink-0">
+                  <button onClick={processTx} disabled={txType === "Cash" && parseFloat(cash) < total} className="w-full py-4 bg-brand hover:bg-brand/90 text-white rounded-2xl font-black text-base shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                    Konfirmasi & Bayar
+                  </button>
+                  <button onClick={() => setModal(null)} className="w-full py-3 text-gray-400 hover:text-gray-600 font-bold text-xs transition-all text-center">Kembali ke Keranjang</button>
+                </div>
+              </div>
+            </Modal>
+          )}
+
           {modal === "loading" && <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[300] flex items-center justify-center"><Spinner /></div>}
+          
+          {modal === "onlineOrders" && (
+            <Modal onClose={() => setModal(null)} title="Pesanan Online (Pending)" full>
+              {onlineOrders.length === 0 ? (
+                <div className="text-center text-gray-400 py-10 flex flex-col items-center">
+                  <svg className="w-16 h-16 mb-4 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  Belum ada pesanan online baru.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {onlineOrders.map(o => (
+                    <div key={o.id} className="bg-white border border-blue-100 rounded-xl p-4 shadow-sm flex flex-col hover:border-blue-300 transition-colors">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <div className="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase">{o.order_code}</div>
+                          <div className="font-extrabold text-gray-800 text-base mt-1">{o.customer_name}</div>
+                          <div className="text-xs text-gray-500 font-medium">
+                            {o.customer_type} • ID/HP: {o.customer_id_input || '-'}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] font-bold text-gray-400 mb-0.5">{new Date(o.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
+                          <div className="font-black text-brand text-lg">{fmt(o.total_amount)}</div>
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-2 my-2 flex-1 text-xs text-gray-600 whitespace-pre-wrap max-h-32 overflow-y-auto border border-gray-100">
+                        <div className="font-bold text-gray-800 mb-1 border-b border-gray-200 pb-1">Pesanan:</div>
+                        {Array.isArray(o.items_json) && o.items_json.map((x, i) => (
+                          <div key={i} className="flex justify-between">
+                            <span>{x.qty}x {x.name}{x.vName ? ` (${x.vName})` : ''}</span>
+                          </div>
+                        ))}
+                        <div className="font-bold text-gray-800 mt-2 border-t border-gray-200 pt-1">Catatan/Alamat:</div>
+                        <div>Pengiriman: {o.shipping_method === 'pickup' ? 'Ambil di Toko' : 'Kirim (Ojol)'}</div>
+                        {o.notes}
+                      </div>
+                      <button onClick={() => processOnlineOrder(o)} className="w-full py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold shadow-md transition-colors flex items-center justify-center gap-2">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7"/></svg>
+                        Proses ke Keranjang Kasir
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Modal>
+          )}
+
+          {showRedeem && selectedCustomer && (
+            <Modal onClose={() => setShowRedeem(false)} title="Tukar Poin">
+               <div className="space-y-4">
+                 <div className="bg-brandLight p-4 rounded-2xl border border-brand/10 text-center">
+                    <div className="text-xs font-bold text-brand/60 uppercase mb-1">Saldo Poin</div>
+                    <div className="text-3xl font-black text-brand">⭐ {selectedCustomer.points}</div>
+                    <div className="text-[10px] text-brand/50 mt-1 font-medium">1 Poin = Rp 100 Diskon</div>
+                 </div>
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500 mb-2 uppercase text-center">Pilih Jumlah Poin</label>
+                   <div className="grid grid-cols-3 gap-2">
+                     {[10, 20, 50, 100, 200, 500].filter(n => n <= selectedCustomer.points).map(n => (
+                       <button key={n} onClick={() => { setPointsRedeemed(n); setShowRedeem(false); }} className="py-3 rounded-xl border-2 border-gray-100 font-black text-sm hover:border-brand hover:text-brand transition-all">
+                         {n}
+                       </button>
+                     ))}
+                   </div>
+                 </div>
+                 <div className="pt-2">
+                    <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Custom Poin</label>
+                    <div className="flex gap-2">
+                      <input type="number" value={pointsRedeemed} onChange={e => {
+                        const v = parseInt(e.target.value) || 0;
+                        setPointsRedeemed(v > selectedCustomer.points ? selectedCustomer.points : v);
+                      }} className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-brand focus:outline-none" />
+                      <button onClick={() => setShowRedeem(false)} className="px-6 bg-brand text-white font-bold rounded-xl text-sm">Gunakan</button>
+                    </div>
+                 </div>
+                 <button onClick={() => { setPointsRedeemed(0); setShowRedeem(false); }} className="w-full py-3 text-red-500 font-bold text-xs">Batal / Reset Poin</button>
+               </div>
+            </Modal>
+          )}
           
           {/* Floating Cart Button Mobile */}
           {!showCart && cart.length > 0 && (
@@ -1068,7 +1378,7 @@
 
       const notify = msg => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
-      if (!user) return <><PinPad onSuccess={setUser} cashiers={cashiers} settings={settings} /><Toast msg={toast} /></>;
+      if (!user) return <><PinPad onSuccess={setUser} cashiers={cashiers} settings={settings} notify={notify} /><Toast msg={toast} /></>;
       if (user.needs_open) return <><OpenSession cashiers={cashiers} onOpened={s => setUser({ ...user, needs_open: false, session_id: s.id, cashier_id: s.cashier_id, session_opened_at: s.created_at, name: s.cashier_name, opened_by: s.opened_by })} notify={notify} /><Toast msg={toast} /></>;
       return <><POS user={user} settings={settings} notify={notify} onLogout={() => setUser(null)} /><Toast msg={toast} /></>;
     }

@@ -33,6 +33,36 @@
       }
     }
   </script>
+  <style>
+    .card-member {
+      background: linear-gradient(135deg, #114232 0%, #1a6b3c 40%, #D4AF37 100%);
+      border-radius: 20px;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+      position: relative;
+      overflow: hidden;
+      color: white;
+    }
+    .card-member::before {
+      content: '';
+      position: absolute;
+      top: -40px; right: -40px;
+      width: 140px; height: 140px;
+      background: rgba(255,255,255,0.07);
+      border-radius: 50%;
+    }
+    .card-member::after {
+      content: '';
+      position: absolute;
+      bottom: -50px; left: -20px;
+      width: 180px; height: 180px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 50%;
+    }
+    .animate-float { animation: float 3s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+    .animate-scale-in { animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    @keyframes scaleIn { 0% { opacity: 0; transform: scale(0.9); } 100% { opacity: 1; transform: scale(1); } }
+  </style>
 </head>
 
 <body class="bg-grayLight text-gray-800 font-sans antialiased">
@@ -71,6 +101,43 @@
       );
     }
     function Spinner() { return <div className="flex items-center justify-center p-10"><div className="w-8 h-8 border-4 border-gray-200 border-t-brand rounded-full animate-spin"></div></div>; }
+    
+    function MemberCard({ customer, storeName, storeColor }) {
+      const color = storeColor || '#114232';
+      const joinDate = customer.created_at ? new Date(customer.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }) : new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' });
+      return (
+        <div className="card-member p-6 text-white animate-scale-in" style={{ background: `linear-gradient(135deg, #0A2517 0%, ${color} 50%, #D4AF37 100%)` }}>
+          <div className="relative z-10 text-left">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest opacity-70 mb-1">Member Card</div>
+                <div className="text-lg font-black leading-tight">{storeName || 'Toko Azzahro'}</div>
+              </div>
+              <div className="text-3xl animate-float">⭐</div>
+            </div>
+            <div className="bg-white/10 rounded-2xl p-4 mb-5 backdrop-blur-sm border border-white/20">
+              <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1">ID Member</div>
+              <div className="font-mono font-black text-xl tracking-wider text-[#D4AF37]">{customer.customer_code || 'AZR-000000-0000'}</div>
+            </div>
+            <div className="mb-4">
+              <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1">Nama Member</div>
+              <div className="font-extrabold text-lg truncate">{customer.name}</div>
+              {customer.phone && <div className="text-sm opacity-70 font-medium mt-0.5">{customer.phone}</div>}
+            </div>
+            <div className="flex justify-between items-end">
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1">Bergabung</div>
+                <div className="text-xs font-bold opacity-90">{joinDate}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1">Saldo Poin</div>
+                <div className="text-2xl font-black text-white">{customer.points || 0} <span className="text-sm opacity-80">poin</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     // ── PIN PAD ──────────────────────────────────────────────────
     function PinPad({ onSuccess }) {
@@ -117,6 +184,245 @@
       );
     }
 
+    // ── KONTEN ────────────────────────────────────────────────────
+    function KatalogPage({ settings, notify, onReload, color }) {
+      const [tab, setTab] = useState("banner");
+      const [saving, setSaving] = useState(false);
+
+      // ── BANNER ──
+      const parseBanners = () => { try { return JSON.parse(settings.banners || "[]"); } catch(_) { return []; } };
+      const [banners, setBanners] = useState(parseBanners);
+      const emptyBanner = { title: "", subtitle: "", image: "", link: "" };
+      const [bForm, setBForm] = useState(emptyBanner);
+      const [editIdx, setEditIdx] = useState(null);
+
+      useEffect(() => { setBanners(parseBanners()); }, [settings.banners]);
+
+      const saveBanners = async (list) => {
+        setSaving(true);
+        await db.from("settings").upsert({ key: "banners", value: JSON.stringify(list) }, { onConflict: "key" });
+        setSaving(false); notify("Banner disimpan!"); onReload();
+      };
+      const addBanner = () => {
+        if (!bForm.title && !bForm.image) return notify("Isi judul atau gambar!");
+        const list = editIdx !== null ? banners.map((b, i) => i === editIdx ? { ...bForm } : b) : [...banners, { ...bForm }];
+        setBanners(list); saveBanners(list); setBForm(emptyBanner); setEditIdx(null);
+      };
+      const delBanner = (i) => { const list = banners.filter((_n, j) => j !== i); setBanners(list); saveBanners(list); };
+      const editBanner = (i) => { setBForm({ ...banners[i] }); setEditIdx(i); };
+
+      // ── TENTANG KAMI ──
+      const parseServices = () => { try { return JSON.parse(settings.about_services || "[]"); } catch(_) { return [{ icon: "🕌", title: "", desc: "" }]; } };
+      const parseLinks = () => { try { return JSON.parse(settings.about_extra_links || "[]"); } catch(_) { return []; } };
+      const defaultLayout = { show_banner: true, show_category: true, show_etalase: true, default_view: "grid", hidden_etalases: [] };
+      const parseLayout = () => { try { return { ...defaultLayout, ...JSON.parse(settings.catalog_layout || "{}") }; } catch(_) { return defaultLayout; } };
+      
+      const [about, setAbout] = useState({
+        about_hero_image: settings.about_hero_image || "",
+        about_description: settings.about_description || "",
+        about_cta_label: settings.about_cta_label || "Hubungi Kami via WhatsApp",
+      });
+      const [services, setServices] = useState(parseServices);
+      const [extraLinks, setExtraLinks] = useState(parseLinks);
+      const [layout, setLayout] = useState(parseLayout);
+
+      useEffect(() => {
+        setAbout({ about_hero_image: settings.about_hero_image || "", about_description: settings.about_description || "", about_cta_label: settings.about_cta_label || "Hubungi Kami via WhatsApp" });
+        setServices(parseServices()); setExtraLinks(parseLinks());
+        setLayout(parseLayout());
+      }, [settings]);
+
+      const saveAbout = async () => {
+        setSaving(true);
+        const pairs = [
+          ...Object.entries(about),
+          ["about_services", JSON.stringify(services)],
+          ["about_extra_links", JSON.stringify(extraLinks)],
+        ];
+        for (const [key, value] of pairs) {
+          await db.from("settings").upsert({ key, value }, { onConflict: "key" });
+        }
+        setSaving(false); notify("Tentang Kami disimpan!"); onReload();
+      };
+
+      const tabCls = (t) => `px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${tab === t ? 'bg-dark text-white shadow' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'}`;
+
+      return (
+        <div className="p-4">
+          <div className="flex justify-between items-center mb-5">
+            <h2 className="font-extrabold text-lg text-gray-800">Manajemen Katalog</h2>
+            <a href="tentangkami.html" target="_blank" className="text-xs font-bold text-brand hover:underline flex items-center gap-1">
+              Lihat Halaman
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 5l7 7-7 7M3 12h18"/></svg>
+            </a>
+          </div>
+          <div className="flex gap-2 mb-6">
+            <button onClick={() => setTab("banner")} className={tabCls("banner")}>🖼 Banner</button>
+            <button onClick={() => setTab("tentang")} className={tabCls("tentang")}>🏪 Tentang Kami</button>
+            <button onClick={() => setTab("layout")} className={tabCls("layout")}>⚙️ Layout</button>
+          </div>
+
+          {tab === "banner" && (
+            <div className="space-y-4 animate-fade-up">
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+                <div className="font-bold text-sm text-gray-700 mb-2">{editIdx !== null ? "Edit Banner" : "Tambah Banner Baru"}</div>
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Judul</label><input value={bForm.title} onChange={e => setBForm(p => ({ ...p, title: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Promo Spesial Ramadan..." /></div>
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Subjudul</label><input value={bForm.subtitle} onChange={e => setBForm(p => ({ ...p, subtitle: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Diskon hingga 20%..." /></div>
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar (opsional)</label><input value={bForm.image} onChange={e => setBForm(p => ({ ...p, image: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link (opsional)</label><input value={bForm.link} onChange={e => setBForm(p => ({ ...p, link: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="index.html?sku=... atau https://..." /></div>
+                <div className="flex gap-2 pt-1">
+                  {editIdx !== null && <button onClick={() => { setBForm(emptyBanner); setEditIdx(null); }} className="px-4 py-2 bg-gray-100 rounded-xl text-sm font-bold text-gray-600">Batal</button>}
+                  <button onClick={addBanner} disabled={saving} className="flex-1 py-2.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm transition-all disabled:opacity-50">{saving ? "Menyimpan..." : editIdx !== null ? "Update Banner" : "Tambah Banner"}</button>
+                </div>
+              </div>
+
+              {banners.length === 0 && <div className="text-center text-gray-400 py-8 text-sm bg-white rounded-2xl border border-gray-100">Belum ada banner</div>}
+              <div className="flex flex-col gap-3">
+                {banners.map((b, i) => (
+                  <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 flex gap-3 items-center">
+                    {b.image ? <img src={b.image} className="w-16 h-12 rounded-xl object-cover shrink-0 bg-gray-100" onError={e => e.target.style.display='none'} /> : <div className="w-16 h-12 rounded-xl shrink-0 flex items-center justify-center text-2xl" style={{ background: `${color}20` }}>🖼</div>}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm text-gray-800 truncate">{b.title || "(tanpa judul)"}</div>
+                      {b.subtitle && <div className="text-xs text-gray-500 truncate">{b.subtitle}</div>}
+                      {b.link && <div className="text-[10px] text-brand font-mono truncate">{b.link}</div>}
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={() => editBanner(i)} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+                      <button onClick={() => delBanner(i)} className="p-2 bg-red-50 hover:bg-red-100 rounded-lg text-red-500 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tab === "tentang" && (
+            <div className="space-y-4 animate-fade-up">
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-4">
+                <div className="font-bold text-sm text-gray-700">Konten Halaman "Tentang Kami"</div>
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Hero</label><input value={about.about_hero_image} onChange={e => setAbout(p => ({ ...p, about_hero_image: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
+                {about.about_hero_image && <img src={about.about_hero_image} className="w-full h-32 object-cover rounded-xl border border-gray-100" onError={e => e.target.style.display='none'} />}
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Deskripsi Toko</label><textarea value={about.about_description} onChange={e => setAbout(p => ({ ...p, about_description: e.target.value }))} rows={5} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" placeholder="Cerita tentang toko Anda..." /></div>
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Label Tombol WA</label><input value={about.about_cta_label} onChange={e => setAbout(p => ({ ...p, about_cta_label: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Hubungi Kami via WhatsApp" /></div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="font-bold text-sm text-gray-700">Layanan Unggulan</div>
+                  <button onClick={() => setServices(sv => [...sv, { icon: "⭐", title: "", desc: "" }])} className="text-xs font-bold px-3 py-1.5 rounded-full border border-brand text-brand hover:bg-brandLight transition-colors">+ Tambah</button>
+                </div>
+                {services.map((sv, i) => (
+                  <div key={i} className="flex gap-2 items-start bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    <input value={sv.icon} onChange={e => setServices(s => s.map((x, j) => j === i ? { ...x, icon: e.target.value } : x))} className="w-10 text-center px-1 py-2 bg-white border border-gray-200 rounded-lg text-lg focus:outline-none" />
+                    <div className="flex-1 space-y-1.5">
+                      <input value={sv.title} onChange={e => setServices(s => s.map((x, j) => j === i ? { ...x, title: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none" placeholder="Judul layanan" />
+                      <input value={sv.desc} onChange={e => setServices(s => s.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none" placeholder="Deskripsi singkat" />
+                    </div>
+                    <button onClick={() => setServices(s => s.filter((_n, j) => j !== i))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="font-bold text-sm text-gray-700">Link Tambahan</div>
+                  <button onClick={() => setExtraLinks(l => [...l, { label: "", url: "" }])} className="text-xs font-bold px-3 py-1.5 rounded-full border border-brand text-brand hover:bg-brandLight transition-colors">+ Tambah</button>
+                </div>
+                {extraLinks.map((lk, i) => (
+                  <div key={i} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                    <div className="flex-1 space-y-1.5">
+                      <input value={lk.label} onChange={e => setExtraLinks(l => l.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none" placeholder="Label tombol" />
+                      <input value={lk.url} onChange={e => setExtraLinks(l => l.map((x, j) => j === i ? { ...x, url: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none" placeholder="URL / link" />
+                    </div>
+                    <button onClick={() => setExtraLinks(l => l.filter((_n, j) => j !== i))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
+                  </div>
+                ))}
+              </div>
+
+              <button onClick={saveAbout} disabled={saving} className="w-full py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all disabled:opacity-50">
+                {saving ? "Menyimpan..." : "Simpan Semua Perubahan"}
+              </button>
+            </div>
+          )}
+
+          {tab === "layout" && (
+            <div className="space-y-4 animate-fade-up pb-8">
+              <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                <h3 className="font-bold text-gray-800 mb-2 border-b pb-2">Pengaturan Tampilan Katalog</h3>
+                
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div>
+                    <div className="font-bold text-gray-800 text-sm">Tampilkan Banner</div>
+                    <div className="text-xs text-gray-500">Tampilkan slider gambar promosi di bagian atas.</div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={layout.show_banner} onChange={e => setLayout(l => ({...l, show_banner: e.target.checked}))} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
+                  </label>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div>
+                    <div className="font-bold text-gray-800 text-sm">Tampilkan Etalase Produk</div>
+                    <div className="text-xs text-gray-500">Tampilkan grup produk berdasarkan etalase secara mendatar.</div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={layout.show_etalase} onChange={e => setLayout(l => ({...l, show_etalase: e.target.checked}))} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
+                  </label>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div>
+                    <div className="font-bold text-gray-800 text-sm">Tampilkan Filter Kategori</div>
+                    <div className="text-xs text-gray-500">Tampilkan tombol-tombol filter jenis produk.</div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={layout.show_category} onChange={e => setLayout(l => ({...l, show_category: e.target.checked}))} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
+                  </label>
+                </div>
+
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div className="font-bold text-gray-800 text-sm mb-2">Tampilan Default Produk</div>
+                  <select value={layout.default_view} onChange={e => setLayout(l => ({...l, default_view: e.target.value}))} className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-brand">
+                    <option value="grid">Grid (Kotak)</option>
+                    <option value="list">List (Memanjang)</option>
+                  </select>
+                </div>
+
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div className="font-bold text-gray-800 text-sm mb-2">Pilih Etalase yang Ditampilkan</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(settings.product_etalase || "").split(",").map(s => s.trim()).filter(Boolean).map(et => {
+                      const isHidden = (layout.hidden_etalases || []).includes(et);
+                      return (
+                        <button key={et} onClick={() => setLayout(l => {
+                          const hidden = l.hidden_etalases || [];
+                          return { ...l, hidden_etalases: isHidden ? hidden.filter(h => h !== et) : [...hidden, et] };
+                        })} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${!isHidden ? 'bg-brand text-white border-brand' : 'bg-white text-gray-500 border-gray-200'}`}>
+                          {et}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+              <button onClick={async () => {
+                setSaving(true);
+                await db.from("settings").upsert({ key: "catalog_layout", value: JSON.stringify(layout) }, { onConflict: "key" });
+                setSaving(false); notify("Layout disimpan!"); onReload();
+              }} disabled={saving} className="w-full py-3 bg-brand text-white font-bold rounded-xl shadow-md hover:bg-dark transition-all disabled:opacity-50">
+                {saving ? "Menyimpan..." : "Simpan Pengaturan Layout"}
+              </button>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
     // ── MAIN APP ─────────────────────────────────────────────────
     function App() {
       const [role, setRole] = useState(null);
@@ -153,7 +459,19 @@
         if (p === "laporan") { loadTransactions(); loadProducts(); loadCustomers(); }
         if (p === "sesi") loadSessions();
         if (p === "pengaturan") { loadCashiers(); loadSettings(); }
+        if (p === "konten") loadSettings();
       }, [page, role]);
+
+      useEffect(() => {
+        const handleMessage = (e) => {
+          if (e.data?.type === 'CUSTOMER_ADDED') {
+            loadCustomers();
+            // notify("Pelanggan baru ditambahkan!");
+          }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+      }, [loadCustomers]);
 
       if (!role) return <PinPad onSuccess={setRole} />;
 
@@ -164,6 +482,7 @@
         { id: "promo", label: "Promo", path: "M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" },
         { id: "laporan", label: "Laporan", path: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
         { id: "sesi", label: "Sesi", path: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+        { id: "konten", label: "Katalog", path: "M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" },
         { id: "pengaturan", label: "Setting", path: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" },
       ];
 
@@ -215,10 +534,11 @@
             <div className="max-w-5xl mx-auto">
               {page === "dashboard" && <Dashboard products={products} transactions={transactions} customers={customers} cashiers={cashiers} sessions={sessions} settings={settings} color={color} notify={notify} onRefresh={() => { loadProducts(); loadCustomers(); loadTransactions(); loadCashiers(); loadSessions(); }} />}
               {page === "produk" && <Produk products={products} notify={notify} onReload={loadProducts} loading={loading.p} color={color} settings={settings} onReloadSettings={loadSettings} />}
-              {page === "pelanggan" && <Pelanggan customers={customers} transactions={transactions} notify={notify} onReload={() => { loadCustomers(); loadTransactions(); }} loading={loading.c} color={color} />}
+              {page === "pelanggan" && <Pelanggan customers={customers} transactions={transactions} notify={notify} onReload={() => { loadCustomers(); loadTransactions(); }} loading={loading.c} color={color} settings={settings} />}
               {page === "promo" && <PromoPage promos={promos} products={products} notify={notify} onReload={loadPromos} color={color} />}
               {page === "laporan" && <Laporan transactions={transactions} products={products} customers={customers} notify={notify} loading={loading.t} color={color} />}
               {page === "sesi" && <SesiPage sessions={sessions} onReload={loadSessions} notify={notify} color={color} />}
+              {page === "konten" && <KatalogPage settings={settings} notify={notify} onReload={loadSettings} color={color} />}
               {page === "pengaturan" && <Pengaturan cashiers={cashiers} settings={settings} notify={notify} role={role} onReload={() => { loadCashiers(); loadSettings(); }} color={color} />}
             </div>
           </main>
@@ -331,10 +651,12 @@
 
     // ── PRODUK ────────────────────────────────────────────────────
     function Produk({ products, notify, onReload, loading, color, settings, onReloadSettings }) {
-      const dynamicCats = (settings.product_categories || "").split(",").map(s => s.trim()).filter(Boolean);
+      const defaultCats = ["Kurma", "Parfum", "Madu", "Tasbih", "Sajadah", "Busana Muslim", "Herbal", "Air Zamzam", "Souvenir", "Lainnya"];
+      const dynamicCats = settings.product_categories ? settings.product_categories.split(",").map(s => s.trim()).filter(Boolean) : defaultCats;
       const dynamicBrands = (settings.product_brands || "").split(",").map(s => s.trim()).filter(Boolean);
+      const dynamicEtalase = (settings.product_etalase || "").split(",").map(s => s.trim()).filter(Boolean);
       const [modal, setModal] = useState(null);
-      const [form, setForm] = useState({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", stock: "", category: "Kurma", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" });
+      const [form, setForm] = useState({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", promo_price: "", promo_percentage: "", stock: "", category: "Kurma", sub_category: "", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "", etalase: "", is_po: false });
       const [search, setSearch] = useState("");
       const [saving, setSaving] = useState(false);
       const [showMenu, setShowMenu] = useState(false);
@@ -373,7 +695,31 @@
           })
         }));
       };
-      const autoSKU = () => handleSKUChange(genSKU(form.category, products));
+      const autoName = () => {
+        const parts = [form.category, form.sub_category, form.brand];
+        if (!form.has_variants && form.weight) parts.push(`${form.weight} ${form.weight_unit}`);
+        setForm(f => ({ ...f, name: parts.filter(Boolean).join(" ") }));
+      };
+      const autoSKU = () => {
+        const p1 = (form.category || "").slice(0, 3).toUpperCase();
+        const p2 = (form.sub_category || "").slice(0, 3).toUpperCase();
+        const p3 = (form.brand || "").slice(0, 3).toUpperCase();
+        const prefix = [p1, p2, p3].filter(Boolean).join("-") || "PRD";
+        const nums = products.filter(x => x.sku && x.sku.startsWith(prefix)).map(x => parseInt(x.sku.replace(prefix + '-', ''))).filter(n => !isNaN(n));
+        const newSku = `${prefix}-${String(nums.length > 0 ? Math.max(...nums) + 1 : 1).padStart(3, "0")}`;
+        handleSKUChange(newSku);
+      };
+      const generateAI = () => {
+        const parts = [form.category, form.sub_category, form.brand].filter(Boolean).join(" ");
+        let desc = `Produk ${parts} berkualitas premium.`;
+        if (form.weight && !form.has_variants) desc += ` Hadir dalam kemasan praktis ${form.weight} ${form.weight_unit}.`;
+        if (form.has_variants && form.variants.length > 0) {
+          desc += ` Tersedia dalam berbagai pilihan menarik: ${form.variants.map(v => v.name).join(", ")}.`;
+        }
+        desc += `\n\nSangat cocok untuk Anda jadikan oleh-oleh haji dan umroh maupun untuk pemakaian pribadi. Dapatkan segera dengan harga terbaik di ${settings?.store_name || 'Toko Azzahro'}!`;
+        setForm(f => ({ ...f, description: desc }));
+        notify("Deskripsi otomatis berhasil dibuat!");
+      };
 
       const [vModal, setVModal] = useState(false);
       const [vForm, setVForm] = useState({ categories: settings.product_categories, brands: settings.product_brands });
@@ -383,6 +729,48 @@
         await db.from("settings").upsert({ key: "product_brands", value: vForm.brands }, { onConflict: "key" });
         notify("Variabel diupdate!");
         setSaving(false); setVModal(false); onReloadSettings();
+      };
+      
+      const [etModal, setEtModal] = useState(false);
+      const [etActive, setEtActive] = useState("");
+      const [etList, setEtList] = useState((settings.product_etalase || "").split(",").map(s => s.trim()).filter(Boolean));
+      const [etSelectedProds, setEtSelectedProds] = useState([]);
+      const [etEditMode, setEtEditMode] = useState(false);
+      const [etNamesForm, setEtNamesForm] = useState(settings.product_etalase || "");
+
+      useEffect(() => {
+        if (etActive) {
+          const selected = products.filter(p => p.etalase === etActive).map(p => p.sku.split('-')[0]);
+          setEtSelectedProds(Array.from(new Set(selected)));
+        } else {
+          setEtSelectedProds([]);
+        }
+      }, [etActive, products]);
+
+      const saveEtProducts = async () => {
+        if (!etActive) return notify("Pilih etalase dulu!");
+        setSaving(true);
+        try {
+          await db.from("products").update({ etalase: null }).eq("etalase", etActive);
+          if (etSelectedProds.length > 0) {
+             for (const prefix of etSelectedProds) {
+                await db.from("products").update({ etalase: etActive }).ilike("sku", `${prefix}%`);
+             }
+          }
+          notify("Produk etalase diperbarui!");
+          onReload();
+          setEtModal(false);
+        } catch (e) { notify("Gagal: " + e.message); }
+        setSaving(false);
+      };
+
+      const saveEtNames = async () => {
+        setSaving(true);
+        await db.from("settings").upsert({ key: "product_etalase", value: etNamesForm }, { onConflict: "key" });
+        setEtList(etNamesForm.split(",").map(s => s.trim()).filter(Boolean));
+        setEtEditMode(false);
+        onReloadSettings();
+        setSaving(false);
       };
       
       const generateMatrix = () => {
@@ -422,22 +810,28 @@
         const variantPayloads = form.has_variants ? form.variants.map(v => ({
           sku: v.sku || `${form.sku}-${v.name.replace(/\s+/g, '').toUpperCase()}`,
           name: form.name, brand: form.brand, description: form.description,
-          category: form.category, image_url: form.image_url,
+          category: form.category, sub_category: form.sub_category, etalase: form.etalase, image_url: form.image_url,
           variant_name: v.name,
           variant_options: form.variant_types.map(vt => ({ name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean) })),
           cost_price: parseInt(v.cost_price)||0,
           price: parseInt(v.price)||0,
+          promo_price: parseInt(v.promo_price)||0,
+          promo_percentage: parseInt(v.promo_percentage)||0,
           stock: parseInt(v.stock)||0,
+          is_po: !!form.is_po,
           weight: v.weight,
           weight_unit: v.weight_unit || "g",
           active: true
         })) : [{
           sku: form.sku, name: form.name, brand: form.brand, description: form.description,
-          category: form.category, image_url: form.image_url || `https://placehold.co/400x400/114232/white?text=${encodeURIComponent(form.name.slice(0, 4))}`,
+          category: form.category, sub_category: form.sub_category, etalase: form.etalase, image_url: form.image_url || `https://placehold.co/400x400/114232/white?text=${encodeURIComponent(form.name.slice(0, 4))}`,
           variant_options: [],
           cost_price: parseInt(form.cost_price)||0,
-          price: parseInt(form.price),
+          price: parseInt(form.price)||0,
+          promo_price: parseInt(form.promo_price)||0,
+          promo_percentage: parseInt(form.promo_percentage)||0,
           stock: parseInt(form.stock) || 0,
+          is_po: !!form.is_po,
           weight: form.weight,
           weight_unit: form.weight_unit,
           active: true
@@ -471,17 +865,17 @@
         setModal(first.id);
         setForm({
           sku: prefix, name: first.name, brand: first.brand || "", description: first.description || "",
-          cost_price: first.cost_price || "", price: first.price || "", stock: first.stock || "",
-          category: first.category, weight: first.weight || "", weight_unit: first.weight_unit || "g",
+          cost_price: first.cost_price || "", price: first.price || "", promo_price: first.promo_price || "", promo_percentage: first.promo_percentage || "", stock: first.stock || "",
+          category: first.category, sub_category: first.sub_category || "", etalase: first.etalase || "", is_po: first.is_po || false, weight: first.weight || "", weight_unit: first.weight_unit || "g",
           has_variants: variants.length > 0,
           variant_types: (first.variant_options || []).map(vt => ({ name: vt.name, options_string: (vt.options || []).join(", ") })),
-          variants: variants.map(v => ({ sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, stock: v.stock, weight: v.weight, weight_unit: v.weight_unit })),
+          variants: variants.map(v => ({ sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, promo_price: v.promo_price, promo_percentage: v.promo_percentage, stock: v.stock, weight: v.weight, weight_unit: v.weight_unit })),
           image_url: first.image_url || ""
         });
       };
 
-      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, NamaVarian: p.variant_name || "", Merk: p.brand, Deskripsi: p.description, HargaBeli: p.cost_price, Harga: p.price, Stok: p.stock, Kategori: p.category, Berat: `${p.weight || ""}${p.weight_unit || ""}`, Foto: p.image_url }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
-      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR001", Nama: "Kurma Ajwa", NamaVarian: "", Merk: "Azzahro", Deskripsi: "Kurma premium", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", Berat: "500g", Foto: "" }, { SKU: "KUR002-MER500", Nama: "Kurma Sukari", NamaVarian: "Merah 500g", Merk: "Azzahro", Deskripsi: "Manis lembut", HargaBeli: 35000, Harga: 45000, Stok: 5, Kategori: "Kurma", Berat: "500g", Foto: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
+      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, NamaVarian: p.variant_name || "", Merk: p.brand, Deskripsi: p.description, HargaBeli: p.cost_price, Harga: p.price, Stok: p.stock, Kategori: p.category, SubKategori: p.sub_category || "", Etalase: p.etalase || "", PO: p.is_po ? "Ya" : "Tidak", Berat: `${p.weight || ""}${p.weight_unit || ""}`, Foto: p.image_url }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
+      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR001", Nama: "Kurma Ajwa", NamaVarian: "", Merk: "Azzahro", Deskripsi: "Kurma premium", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", SubKategori: "Premium", Etalase: "Depan", PO: "Tidak", Berat: "500g", Foto: "" }, { SKU: "KUR002-MER500", Nama: "Kurma Sukari", NamaVarian: "Merah 500g", Merk: "Azzahro", Deskripsi: "Manis lembut", HargaBeli: 35000, Harga: 45000, Stok: 5, Kategori: "Kurma", SubKategori: "Basah", Etalase: "Rak A", PO: "Tidak", Berat: "500g", Foto: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
       const importFile = e => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
@@ -499,6 +893,9 @@
               price: parseInt(r.Harga) || 0,
               stock: parseInt(r.Stok) || 0,
               category: r.Kategori || "Umum",
+              sub_category: r.SubKategori || "",
+              etalase: r.Etalase || "",
+              is_po: String(r.PO).toLowerCase() === "ya",
               weight: String(r.Berat || "").replace(/[^0-9.]/g, ""),
               weight_unit: String(r.Berat || "g").replace(/[0-9.]/g, "") || "g",
               image_url: r.Foto || "",
@@ -522,7 +919,7 @@
         <div className="p-4">
           <div className="flex gap-2 mb-4">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / SKU..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
-            <button onClick={() => { setModal("add"); setForm({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", stock: "", category: "Kurma", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
+            <button onClick={() => { setModal("add"); setForm({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", promo_price: "", promo_percentage: "", stock: "", category: "Kurma", sub_category: "", etalase: "", is_po: false, weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
             <div className="relative">
               <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
@@ -533,6 +930,7 @@
                   { l: "Export Excel", a: exportXLSX, d: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" }, 
                   { l: "Download Template", a: dlTemplate, d: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" }, 
                   { l: "Kelola Variabel", a: () => { setVModal(true); setVForm({ categories: settings.product_categories, brands: settings.product_brands }); setShowMenu(false); }, d: "M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" }, 
+                  { l: "Kelola Etalase", a: () => { setEtModal(true); setShowMenu(false); }, d: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" }, 
                   { l: "Refresh", a: () => { onReload(); setShowMenu(false); }, d: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" }
                 ].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-xs font-black uppercase tracking-wider text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0 flex items-center gap-3">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d={item.d}/></svg>
@@ -574,8 +972,43 @@
           {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Produk" : "Edit Produk"}>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Kategori</label>
-                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">{dynamicCats.map(c => <option key={c}>{c}</option>)}</select>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Etalase (Opsional)</label>
+                <input list="etalase-list" value={form.etalase} onChange={e => setForm(f => ({ ...f, etalase: e.target.value }))} placeholder="Pilih atau ketik etalase..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                <datalist id="etalase-list">{dynamicEtalase.map(c => <option key={c} value={c} />)}</datalist>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Jenis Produk Utama *</label>
+                  <input list="cat-list" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="Pilih atau ketik jenis..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  <datalist id="cat-list">{dynamicCats.map(c => <option key={c} value={c} />)}</datalist>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Jenis Produk 2 (Turunan)</label>
+                  <input list="subcat-list" value={form.sub_category} onChange={e => setForm(f => ({ ...f, sub_category: e.target.value }))} placeholder="Pilih atau ketik turunan..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  <datalist id="subcat-list">
+                    {Array.from(new Set(products.map(p => p.sub_category).filter(Boolean))).map(c => <option key={c} value={c} />)}
+                  </datalist>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Merk</label>
+                <input list="brand-list" value={form.brand} onChange={e => setForm(p => ({ ...p, brand: e.target.value }))} placeholder="Pilih atau ketik merk..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                <datalist id="brand-list">{dynamicBrands.map(b => <option key={b} value={b} />)}</datalist>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Nama Produk *</label>
+                <div className="flex gap-2">
+                  <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Nama produk lengkap" className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  <button onClick={autoName} className="px-4 bg-brandLight text-brand hover:bg-brand/20 font-black uppercase tracking-wider text-[10px] rounded-xl transition-all flex items-center gap-1.5">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    Auto
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">URL Foto / Video</label>
+                <input value={form.image_url} onChange={e => setForm(p => ({ ...p, image_url: e.target.value }))} placeholder="https://url1.com, https://url2.com" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                <p className="text-[10px] text-gray-400 mt-1">Pisahkan dengan koma. Maksimal 5 URL.</p>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">SKU Induk *</label>
@@ -589,44 +1022,48 @@
                 <div className="text-[10px] text-gray-400 mt-1">Hanya huruf dan angka (Alphanumeric). SKU Varian akan mengikuti kode ini.</div>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Nama *</label>
-                <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Nama produk" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Merk</label>
-                  <select value={form.brand} onChange={e => setForm(p => ({ ...p, brand: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
-                    <option value="">- Tanpa Merk -</option>
-                    {dynamicBrands.map(b => <option key={b}>{b}</option>)}
-                  </select>
+                <div className="flex justify-between items-end mb-1.5">
+                  <label className="block text-xs font-bold text-gray-500 uppercase">Deskripsi</label>
+                  <button onClick={generateAI} className="text-[10px] font-bold text-brand bg-brandLight hover:bg-brand/20 px-2 py-1 rounded-lg transition-colors">✨ Buat Otomatis</button>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">URL Foto</label>
-                  <input value={form.image_url} onChange={e => setForm(p => ({ ...p, image_url: e.target.value }))} placeholder="https://..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Deskripsi</label>
-                <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} placeholder="Deskripsi singkat..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+                <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={3} placeholder="Deskripsi produk..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
               </div>
               <div className="flex items-center justify-between bg-brandLight p-3 rounded-xl border border-brand/20">
                 <label className="text-sm font-bold text-brand">Aktifkan Varian Produk</label>
                 <input type="checkbox" checked={form.has_variants} onChange={e => setForm(f => ({ ...f, has_variants: e.target.checked }))} className="w-5 h-5 rounded text-brand focus:ring-brand" />
               </div>
-              {!form.has_variants && <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Beli</label>
-                  <input value={form.cost_price} onChange={e => setForm(p => ({ ...p, cost_price: e.target.value }))} type="number" placeholder="40000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              {!form.has_variants && <>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Beli</label>
+                    <input value={form.cost_price} onChange={e => setForm(p => ({ ...p, cost_price: e.target.value }))} type="number" placeholder="40000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Jual *</label>
+                    <input value={form.price} onChange={e => { const val = parseInt(e.target.value)||0; setForm(p => ({ ...p, price: val, promo_price: p.promo_percentage ? Math.round(val - (val * p.promo_percentage / 100)) : p.promo_price })); }} type="number" placeholder="50000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 font-bold text-brand" />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Jual *</label>
-                  <input value={form.price} onChange={e => setForm(p => ({ ...p, price: e.target.value }))} type="number" placeholder="50000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 font-bold text-brand" />
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Harga Promo</label>
+                    <input value={form.promo_price || ""} onChange={e => { const val = parseInt(e.target.value)||0; setForm(p => ({ ...p, promo_price: val, promo_percentage: p.price ? Math.round(((p.price - val) / p.price) * 100) : 0 })); }} type="number" placeholder="45000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 text-orange-600 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Diskon %</label>
+                    <input value={form.promo_percentage || ""} onChange={e => { const val = parseInt(e.target.value)||0; setForm(p => ({ ...p, promo_percentage: val, promo_price: p.price ? Math.round(p.price - (p.price * val / 100)) : 0 })); }} type="number" placeholder="10" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Stok Utama *</label>
-                  <input value={form.stock} onChange={e => setForm(p => ({ ...p, stock: e.target.value }))} type="number" placeholder="10" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                <div className="mt-3 flex gap-3 items-end">
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Stok Utama *</label>
+                    <input value={form.stock} onChange={e => setForm(p => ({ ...p, stock: e.target.value }))} type="number" placeholder="10" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                  </div>
+                  <div className="flex items-center bg-gray-50 border border-gray-200 px-4 py-3 rounded-xl gap-2 h-[46px]">
+                    <input type="checkbox" id="is_po" checked={form.is_po} onChange={e => setForm(p => ({ ...p, is_po: e.target.checked }))} className="w-4 h-4 rounded text-brand focus:ring-brand" />
+                    <label htmlFor="is_po" className="text-xs font-bold text-gray-600 uppercase cursor-pointer">PO</label>
+                  </div>
                 </div>
-              </div>}
+              </>}
               {!form.has_variants && <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Berat Utama</label>
                 <div className="flex gap-2">
@@ -648,10 +1085,10 @@
                     <div className="space-y-3 animate-fade-in">
                       {form.variant_types.map((vt, i) => <div key={i} className="p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
                         <div className="flex gap-2 mb-2">
-                          <input value={vt.name} onChange={e => updateVarType(i, 'name', e.target.value)} placeholder="Tipe (cth: Warna)" className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-brand font-bold" />
+                          <input value={vt.name} onChange={e => updateVarType(i, 'name', e.target.value)} placeholder={i === 0 ? "Tipe (cth: Warna)" : "Tipe (cth: Ukuran)"} className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-brand font-bold" />
                           <button onClick={() => remVarType(i)} className="px-3 text-red-400 hover:text-red-600 transition-colors">✕</button>
                         </div>
-                        <input value={vt.options_string || ""} onChange={e => updateVarType(i, 'options_string', e.target.value)} placeholder="Pilihan: Merah, Hijau, Biru" className="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
+                        <input value={vt.options_string || ""} onChange={e => updateVarType(i, 'options_string', e.target.value)} placeholder={i === 0 ? "Pilihan: Merah, Hijau, Biru" : "Pilihan: S, M, L, XL"} className="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
                       </div>)}
                       <div className="flex gap-2 mt-2">
                         {form.variant_types.length < 2 && <button onClick={addVarType} className="flex-1 py-2 bg-white border border-dashed border-gray-300 text-gray-500 text-xs font-bold rounded-lg hover:border-brand hover:text-brand transition-all">+ Tambah Tipe</button>}
@@ -674,15 +1111,17 @@
                     <span className="text-[10px] text-gray-400 font-medium">{form.variants.length} kombinasi</span>
                   </div>
                   <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-                    <table className="w-full text-left border-collapse min-w-[650px]">
+                    <table className="w-full text-left border-collapse min-w-[800px]">
                       <thead>
                         <tr className="border-b border-gray-100">
-                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[20%]">Varian</th>
-                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[20%]">SKU Varian</th>
-                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Beli</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">Varian</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">SKU</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">H. Beli</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Jual</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Promo</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">Diskon%</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%] text-center">Stok</th>
-                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[20%]">Berat</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">Berat</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -690,7 +1129,9 @@
                           <td className="py-2.5 pr-2 text-sm font-bold text-gray-800">{v.name}</td>
                           <td className="py-2 pr-2"><input value={v.sku} onChange={e => updateVarItem(i, 'sku', e.target.value.toUpperCase())} placeholder="SKU" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none uppercase font-mono" /></td>
                           <td className="py-2 pr-2"><input value={v.cost_price || ""} onChange={e => updateVarItem(i, 'cost_price', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
-                          <td className="py-2 pr-2"><input value={v.price || ""} onChange={e => updateVarItem(i, 'price', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none font-bold text-brand" /></td>
+                          <td className="py-2 pr-2"><input value={v.price || ""} onChange={e => { const val=parseInt(e.target.value)||0; setForm(f=>{const nv=[...f.variants]; nv[i].price=val; nv[i].promo_price=nv[i].promo_percentage?Math.round(val-(val*nv[i].promo_percentage/100)):nv[i].promo_price; return {...f,variants:nv};}); }} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none font-bold text-brand" /></td>
+                          <td className="py-2 pr-2"><input value={v.promo_price || ""} onChange={e => { const val=parseInt(e.target.value)||0; setForm(f=>{const nv=[...f.variants]; nv[i].promo_price=val; nv[i].promo_percentage=nv[i].price?Math.round(((nv[i].price-val)/nv[i].price)*100):0; return {...f,variants:nv};}); }} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none text-orange-600 font-bold" /></td>
+                          <td className="py-2 pr-2"><input value={v.promo_percentage || ""} onChange={e => { const val=parseInt(e.target.value)||0; setForm(f=>{const nv=[...f.variants]; nv[i].promo_percentage=val; nv[i].promo_price=nv[i].price?Math.round(nv[i].price-(nv[i].price*val/100)):0; return {...f,variants:nv};}); }} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
                           <td className="py-2 pr-2"><input value={v.stock || ""} onChange={e => updateVarItem(i, 'stock', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
                           <td className="py-2">
                             <div className="flex bg-white border border-gray-200 rounded overflow-hidden">
@@ -714,16 +1155,67 @@
           {vModal && <Modal onClose={() => setVModal(false)} title="Kelola Variabel Produk">
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Daftar Kategori</label>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Daftar Jenis Produk</label>
                 <textarea value={vForm.categories} onChange={e => setVForm(v => ({ ...v, categories: e.target.value }))} rows={4} placeholder="Pisahkan dengan koma..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
-                <p className="text-[10px] text-gray-400 mt-1">Pisahkan setiap kategori dengan koma.</p>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Daftar Merk/Brand</label>
                 <textarea value={vForm.brands} onChange={e => setVForm(v => ({ ...v, brands: e.target.value }))} rows={4} placeholder="Pisahkan dengan koma..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
-                <p className="text-[10px] text-gray-400 mt-1">Pisahkan setiap merk dengan koma.</p>
               </div>
               <button onClick={saveVars} disabled={saving} className="w-full bg-brand text-white font-bold py-4 rounded-2xl shadow-lg hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 mt-4">{saving ? "Menyimpan..." : "Simpan Variabel"}</button>
+            </div>
+          </Modal>}
+
+          {etModal && <Modal onClose={() => setEtModal(false)} title="Kelola Etalase Produk">
+            <div className="space-y-4 max-h-[75vh] flex flex-col min-w-[320px] md:min-w-[500px]">
+              <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200 shrink-0">
+                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">Pengaturan Nama Etalase</div>
+                <button onClick={() => setEtEditMode(!etEditMode)} className="text-[10px] font-bold text-brand bg-white border border-brand/20 px-3 py-1 rounded-lg hover:bg-brandLight transition-all">{etEditMode ? "Batal" : "Edit Nama"}</button>
+              </div>
+
+              {etEditMode ? (
+                <div className="animate-fade-in space-y-3 shrink-0">
+                  <textarea value={etNamesForm} onChange={e => setEtNamesForm(e.target.value)} rows={4} placeholder="Pisahkan dengan koma..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+                  <button onClick={saveEtNames} disabled={saving} className="w-full py-3 bg-brand text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-all text-xs uppercase tracking-widest">{saving ? "Menyimpan..." : "Update Daftar Etalase"}</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2 shrink-0 max-h-[150px] overflow-y-auto no-scrollbar">
+                    {etList.length === 0 ? <div className="text-xs text-gray-400 italic py-4 w-full text-center">Belum ada etalase. Klik "Edit Nama" untuk menambahkan.</div> : etList.map(et => <button key={et} onClick={() => setEtActive(et)} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${etActive === et ? 'bg-brand text-white shadow-md border-brand' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{et}</button>)}
+                  </div>
+
+                  {etActive && (
+                    <div className="flex-1 flex flex-col min-h-0 border-t border-gray-100 pt-4 animate-fade-in overflow-hidden">
+                      <div className="flex justify-between items-center mb-3 shrink-0">
+                        <div className="text-xs font-bold text-gray-500 uppercase tracking-widest">Pilih Produk untuk: <span className="text-brand">{etActive}</span></div>
+                        <div className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{etSelectedProds.length} Produk</div>
+                      </div>
+                      <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar min-h-0">
+                        {Object.values(grouped).map(p => {
+                          const prefix = p.sku.split('-')[0];
+                          const isSelected = etSelectedProds.includes(prefix);
+                          return (
+                            <label key={prefix} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? 'bg-brandLight border-brand/20 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
+                              <input type="checkbox" checked={isSelected} onChange={e => {
+                                if (e.target.checked) setEtSelectedProds([...etSelectedProds, prefix]);
+                                else setEtSelectedProds(etSelectedProds.filter(id => id !== prefix));
+                              }} className="w-4 h-4 rounded text-brand focus:ring-brand" />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-bold text-gray-800 truncate">{p.name}</div>
+                                <div className="text-[9px] text-gray-400 font-mono mt-0.5 uppercase">{p.sku} • {p.brand || 'Umum'}</div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="pt-4 mt-2 border-t border-gray-100 flex gap-3 shrink-0">
+                        <button onClick={() => setEtActive("")} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition-colors">Batal</button>
+                        <button onClick={saveEtProducts} disabled={saving} className="flex-[2] py-3 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-xs shadow-md transition-all uppercase tracking-widest">{saving ? "Proses..." : "Simpan Produk ke Etalase"}</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </Modal>}
         </div>
@@ -731,42 +1223,137 @@
     }
 
     // ── PELANGGAN ────────────────────────────────────────────────
-    function Pelanggan({ customers, transactions, notify, onReload, loading, color }) {
+    function Pelanggan({ customers, transactions, notify, onReload, loading, color, settings }) {
       const [modal, setModal] = useState(null);
-      const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" });
+      const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "", customer_code: "", identity_type: "KTP", identity_number: "", birthplace: "" });
       const [search, setSearch] = useState("");
+      const [sortBy, setSortBy] = useState("date_desc");
       const [detail, setDetail] = useState(null);
       const [saving, setSaving] = useState(false);
       const [showMenu, setShowMenu] = useState(false);
+      const [pointModal, setPointModal] = useState(null);
+      const [pointAdjust, setPointAdjust] = useState({ amount: "", note: "" });
+      const [pointLedger, setPointLedger] = useState([]);
       const fileRef = useRef();
 
-      const filtered = customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search) || (c.email || "").toLowerCase().includes(search.toLowerCase()));
-      const custTx = id => transactions.filter(t => t.customer_id === id);
+      const custTx = id => transactions.filter(t => String(t.customer_id) === String(id));
       const custTotal = id => custTx(id).reduce((s, t) => s + t.total, 0);
+
+      const filtered = useMemo(() => {
+        let list = customers.filter(c => (c.name||"").toLowerCase().includes(search.toLowerCase()) || (c.phone||"").includes(search) || (c.customer_code||"").toLowerCase().includes(search.toLowerCase()));
+        
+        return list.sort((a, b) => {
+          if (sortBy === "name_asc") return (a.name||"").localeCompare(b.name||"");
+          if (sortBy === "name_desc") return (b.name||"").localeCompare(a.name||"");
+          if (sortBy === "date_desc") return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+          if (sortBy === "date_asc") return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+          if (sortBy === "points_desc") return (b.points || 0) - (a.points || 0);
+          if (sortBy === "tx_desc") return custTx(b.id).length - custTx(a.id).length;
+          return 0;
+        });
+      }, [customers, search, sortBy, transactions]);
+
+      const shareCard = (c) => {
+        const baseUrl = window.location.href.split('/').slice(0, -1).join('/');
+        const url = `${baseUrl}/daftar.html?phone=${c.phone}`;
+        const text = `Halo ${c.name}, ini adalah kartu member ${settings?.store_name || 'Toko Azzahro'} Anda. Silakan simpan link ini:\n\n${url}`;
+        
+        if (navigator.share && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+          navigator.share({ title: `Kartu Member ${settings?.store_name || 'Toko Azzahro'}`, text, url })
+            .catch(() => {
+              navigator.clipboard.writeText(text);
+              notify("Link kartu disalin!");
+            });
+        } else {
+          navigator.clipboard.writeText(text);
+          notify("Link kartu disalin!");
+        }
+      };
+
+      const generateCode = async () => {
+        try {
+          const { data, error } = await db.rpc('generate_customer_code');
+          if (error) throw error;
+          setForm(f => ({ ...f, customer_code: data }));
+        } catch (e) {
+          const now = new Date();
+          const d = now.getFullYear().toString().slice(-2) + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
+          const seq = String(customers.length + 1).padStart(4, '0');
+          setForm(f => ({ ...f, customer_code: `AZR-${d}-${seq}` }));
+        }
+      };
+
+      const loadPoints = async (cid) => {
+        const { data } = await db.from("point_ledger").select("*").eq("customer_id", cid).order("created_at", { ascending: false });
+        setPointLedger(data || []);
+      };
+
+      const adjustPoints = async () => {
+        if (!pointAdjust.amount) return;
+        setSaving(true);
+        const { error } = await db.rpc('add_customer_points', { 
+          p_customer_id: pointModal.id, 
+          p_points: parseInt(pointAdjust.amount), 
+          p_type: 'adjustment', 
+          p_note: pointAdjust.note 
+        });
+        setSaving(false);
+        if (error) {
+          console.error("Adjustment error:", error);
+          return notify("Gagal: " + error.message);
+        }
+        notify("Poin berhasil disesuaikan!");
+        setPointModal(null); setPointAdjust({ amount: "", note: "" }); onReload();
+      };
 
       const save = async () => {
         if (!form.name || !form.phone) return notify("Nama & HP wajib!");
         setSaving(true);
-        const payload = { name: form.name, phone: form.phone, email: form.email, address: form.address, city: form.city, birthdate: form.birthdate || null, gender: form.gender, notes: form.notes };
+        let finalCode = form.customer_code;
+        if (modal === "add" && !finalCode) {
+           const now = new Date();
+           const d = now.getFullYear().toString().slice(-2) + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
+           const seq = String(customers.length + 1).padStart(4, '0');
+           finalCode = `AZR-${d}-${seq}`;
+        }
+        const payload = { 
+          name: form.name, phone: form.phone, email: form.email, address: form.address, city: form.city, 
+          birthdate: form.birthdate || null, gender: form.gender, notes: form.notes, customer_code: finalCode,
+          identity_type: form.identity_type, identity_number: form.identity_number, birthplace: form.birthplace
+        };
         let error;
         if (modal === "add") { ({ error } = await db.from("customers").insert(payload)); if (!error) notify("Ditambahkan!"); }
         else { ({ error } = await db.from("customers").update(payload).eq("id", modal)); if (!error) notify("Diupdate!"); }
         setSaving(false); if (error) return notify("Gagal: " + error.message);
         setModal(null); onReload();
       };
-      const del = async (id) => { const { error } = await db.from("customers").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); setDetail(null); onReload(); };
-      const openEdit = c => { setDetail(null); setModal(c.id); setForm({ name: c.name, phone: c.phone, email: c.email || "", address: c.address || "", city: c.city || "", birthdate: c.birthdate || "", gender: c.gender || "", notes: c.notes || "" }); };
 
-      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(customers.map(c => ({ Nama: c.name, HP: c.phone, Email: c.email || "", Alamat: c.address || "", Kota: c.city || "", TglLahir: c.birthdate || "", Kelamin: c.gender || "", TotalBelanja: custTotal(c.id), JmlTransaksi: custTx(c.id).length }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pelanggan"); XLSX.writeFile(wb, `pelanggan_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
-      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ Nama: "Contoh Pelanggan", HP: "08123456789", Email: "email@contoh.com", Alamat: "Jl. Contoh No. 1", Kota: "Semarang", TglLahir: "1990-01-15", Kelamin: "Laki-laki", Catatan: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pelanggan"); XLSX.writeFile(wb, "template_pelanggan.xlsx"); notify("Template didownload!"); setShowMenu(false); };
-      const importFile = e => {
+      const del = async (id) => { const { error } = await db.from("customers").delete().eq("id", id); if (error) return notify("Gagal: " + error.message); notify("Dihapus!"); setDetail(null); onReload(); };
+      const openEdit = c => { setDetail(null); setModal(c.id); setForm({ name: c.name, phone: c.phone, email: c.email || "", address: c.address || "", city: c.city || "", birthdate: c.birthdate || "", gender: c.gender || "", notes: c.notes || "", customer_code: c.customer_code || "", identity_type: c.identity_type || "KTP", identity_number: c.identity_number || "", birthplace: c.birthplace || "" }); };
+      const copyRegisterUrl = () => { navigator.clipboard.writeText(window.location.origin + "/daftar.html"); notify("Link pendaftaran disalin!"); };
+      const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(customers.map(c => ({ Nama: c.name, HP: c.phone, Email: c.email || "", TipeID: c.identity_type || "", NoID: c.identity_number || "", KotaLahir: c.birthplace || "", TglLahir: c.birthdate || "", Kelamin: c.gender || "", Alamat: c.address || "", Kota: c.city || "", Catatan: c.notes || "", TotalBelanja: custTotal(c.id), JmlTransaksi: custTx(c.id).length }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pelanggan"); XLSX.writeFile(wb, `pelanggan_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
+      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ Nama: "Contoh Pelanggan", HP: "08123456789", Email: "email@contoh.com", TipeID: "KTP", NoID: "3301xxxxxxxxxxxx", KotaLahir: "Semarang", TglLahir: "1990-01-15", Kelamin: "Laki-laki", Alamat: "Jl. Contoh No. 1", Kota: "Semarang", Catatan: "Referensi, dll" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pelanggan"); XLSX.writeFile(wb, "template_pelanggan.xlsx"); notify("Template didownload!"); setShowMenu(false); };
+      const importFile = (e) => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
-        reader.onload = async ev => {
+        reader.onload = async (e) => {
           try {
-            const wb = XLSX.read(ev.target.result, { type: "binary" });
-            const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-            const imported = rows.map(r => ({ name: r.Nama || "", phone: String(r.HP || ""), email: r.Email || "", address: r.Alamat || "", city: r.Kota || "", birthdate: r.TglLahir || null, gender: r.Kelamin || "", notes: r.Catatan || "" })).filter(r => r.name && r.phone);
+            const wb = XLSX.read(e.target.result, { type: "binary" });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(ws);
+            const imported = rows.map(r => ({ 
+              name: r.Nama || "", 
+              phone: String(r.HP || ""), 
+              email: r.Email || "", 
+              identity_type: r.TipeID || "KTP",
+              identity_number: String(r.NoID || ""),
+              birthplace: r.KotaLahir || "",
+              birthdate: r.TglLahir || null, 
+              gender: r.Kelamin || "", 
+              address: r.Alamat || "", 
+              city: r.Kota || "", 
+              notes: r.Catatan || "" 
+            })).filter(r => r.name && r.phone);
             let added = 0, skipped = 0;
             for (const item of imported) { const ex = customers.find(c => c.phone === item.phone); if (ex) { skipped++; continue; } await db.from("customers").insert(item); added++; }
             notify(`${added} ditambah, ${skipped} dilewati`); onReload();
@@ -778,17 +1365,32 @@
 
       return (
         <div className="p-4">
-          <div className="flex gap-2 mb-4">
+          <div className="flex gap-2 mb-3">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / HP / email..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
-            <button onClick={() => { setModal("add"); setForm({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
+            <button onClick={() => { setModal("add"); setForm({ name: "", phone: "", email: "", address: "", city: "", birthdate: "", gender: "", notes: "", customer_code: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
             <div className="relative">
               <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
               </button>
               {showMenu && <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-lg border border-gray-100 min-w-[180px] z-50 overflow-hidden">
-                {[{ l: "Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "Export Excel", a: exportXLSX }, { l: "Download Template", a: dlTemplate }, { l: "Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
+                {[{ l: "Copy Link Daftar", a: copyRegisterUrl }, { l: "Import Excel", a: () => { fileRef.current.click(); setShowMenu(false); } }, { l: "Export Excel", a: exportXLSX }, { l: "Download Template", a: dlTemplate }, { l: "Refresh", a: () => { onReload(); setShowMenu(false); } }].map(item => <button key={item.l} onClick={item.a} className="w-full text-left px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-b border-gray-50 last:border-0">{item.l}</button>)}
               </div>}
             </div>
+          </div>
+
+          <div className="flex items-center gap-2 mb-5 overflow-x-auto pb-1 no-scrollbar">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Urutkan:</span>
+            {[
+              { id: "date_desc", l: "🆕 Terbaru" },
+              { id: "name_asc", l: "🔤 A-Z" },
+              { id: "points_desc", l: "⭐ Poin" },
+              { id: "tx_desc", l: "🛍️ Transaksi" },
+              { id: "date_asc", l: "📅 Terlama" }
+            ].map(s => (
+              <button key={s.id} onClick={() => setSortBy(s.id)} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold whitespace-nowrap transition-all border ${sortBy === s.id ? 'bg-dark text-white border-dark' : 'bg-white text-gray-500 border-gray-100'}`}>
+                {s.l}
+              </button>
+            ))}
           </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={importFile} className="hidden" />
 
@@ -796,80 +1398,149 @@
             {loading ? <Spinner /> : filtered.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100 mt-2">Belum ada pelanggan</div> : filtered.map(c => <div key={c.id} onClick={() => setDetail(c)} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-4 cursor-pointer hover:border-brand/30 transition-colors group">
               <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-black text-xl shrink-0 shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>{c.name[0].toUpperCase()}</div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-gray-800 text-sm truncate">{c.name}</h3>
-                <div className="text-[11px] text-gray-500 font-medium mt-0.5">{c.phone}{c.city ? ` · ${c.city}` : ""}</div>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <h3 className="font-bold text-gray-800 text-sm truncate">{c.name}</h3>
+                  <span className="bg-brandLight text-brand px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{c.customer_code || "Tanpa ID"}</span>
+                </div>
+                <div className="text-[11px] text-gray-500 font-medium">{c.phone}{c.city ? ` · ${c.city}` : ""}</div>
               </div>
               <div className="text-right shrink-0">
-                <div className="font-extrabold text-[15px]" style={{ color }}>{fmt(custTotal(c.id))}</div>
+                <div className="font-extrabold text-[15px]" style={{ color }}>⭐ {c.points || 0}</div>
                 <div className="text-[10px] text-gray-400 font-semibold">{custTx(c.id).length} tx</div>
               </div>
             </div>)}
           </div>
 
-          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Pelanggan" : "Edit Pelanggan"}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Jenis Kelamin</label>
-                <div className="flex gap-2">
-                  {["Laki-laki", "Perempuan", "—"].map(g => <button key={g} onClick={() => setForm(f => ({ ...f, gender: g === "—" ? "" : g }))} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors border-2 ${form.gender === (g === "—" ? "" : g) ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{g}</button>)}
+          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Pelanggan" : "Edit Pelanggan"} full={modal === "add"}>
+            {modal === "add" ? (
+              <div className="h-[600px] flex flex-col">
+                <iframe src="daftar.html" className="w-full flex-1 border-0 rounded-xl" title="Daftar Member" />
+                <div className="p-4 text-center text-[10px] text-gray-400 font-medium">
+                  Tutup modal ini setelah pendaftaran selesai.
                 </div>
               </div>
-              {[{ label: "Nama Lengkap *", key: "name", ph: "Sesuai KTP" }, { label: "No. HP / WA *", key: "phone", ph: "08xxxxxxxxxx", type: "tel" }, { label: "Email", key: "email", ph: "email@domain.com", type: "email" }, { label: "Alamat", key: "address", ph: "Alamat domisili" }, { label: "Kota", key: "city", ph: "cth: Semarang" }, { label: "Tgl Lahir", key: "birthdate", type: "date", ph: "" }, { label: "Catatan", key: "notes", ph: "Alergi / referensi..." }].map(f => <div key={f.key}>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
-                <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>)}
-              <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
-                <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
-                <button onClick={save} disabled={saving} className="flex-[2] py-3.5 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Data"}</button>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Tipe Identitas</label>
+                    <select value={form.identity_type} onChange={e => setForm(p => ({ ...p, identity_type: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none">
+                      <option>KTP</option>
+                      <option>Paspor</option>
+                      <option>Lainnya</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">No. Identitas</label>
+                    <input value={form.identity_number} onChange={e => setForm(p => ({ ...p, identity_number: e.target.value }))} placeholder="Nomor kartu..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Kota Lahir</label>
+                    <input value={form.birthplace} onChange={e => setForm(p => ({ ...p, birthplace: e.target.value }))} placeholder="cth: Semarang" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Tgl Lahir</label>
+                    <input value={form.birthdate} onChange={e => setForm(p => ({ ...p, birthdate: e.target.value }))} type="date" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                  </div>
+                </div>
+
+                {[{ label: "Nama Lengkap *", key: "name", ph: "Sesuai KTP" }, { label: "No. HP / WA *", key: "phone", ph: "08xxxxxxxxxx" }, { label: "Email", key: "email", ph: "email@domain.com", type: "email" }, { label: "Alamat", key: "address", ph: "Alamat domisili" }, { label: "Kota", key: "city", ph: "cth: Semarang" }, { label: "Catatan", key: "notes", ph: "Referensi, dll" }].map(f => <div key={f.key}>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">{f.label}</label>
+                  <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} type={f.type || "text"} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>)}
+                <div className="flex gap-3 pt-4 border-t border-gray-100 mt-2">
+                  <button onClick={() => setModal(null)} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">Batal</button>
+                  <button onClick={save} disabled={saving} className="flex-[2] py-3.5 bg-gold hover:bg-[#c29d2f] text-dark rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Data"}</button>
+                </div>
+              </div>
+            )}
+          </Modal>}
+
+          {detail && <Modal onClose={() => setDetail(null)} title="Detail Pelanggan">
+            <div className="space-y-6">
+              <MemberCard customer={detail} storeName={settings?.store_name} storeColor={color} />
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-brandLight rounded-2xl p-4 text-center border border-brand/10">
+                  <div className="text-3xl font-black text-brand mb-1">⭐ {detail.points || 0}</div>
+                  <div className="text-[10px] font-bold text-brand/70 uppercase tracking-wider mb-2">Poin Saldo</div>
+                  <button onClick={() => { setPointModal(detail); setDetail(null); loadPoints(detail.id); }} className="text-[10px] bg-brand text-white px-3 py-1 rounded-full font-bold">Kelola Poin</button>
+                </div>
+                <div className="bg-gray-50 rounded-2xl p-4 text-center border border-gray-100 flex flex-col justify-center">
+                  <div className="text-[17px] font-black text-gray-800 mb-1 truncate">{fmt(custTotal(detail.id))}</div>
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{custTx(detail.id).length} Transaksi</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl p-4 border border-gray-100 space-y-3">
+                {[{ icon: "📱", val: detail.phone }, { icon: "✉️", val: detail.email }, { icon: "📍", val: [detail.address, detail.city].filter(Boolean).join(", ") }, { icon: "🎂", val: detail.birthdate ? new Date(detail.birthdate).toLocaleDateString("id-ID") : null }, { icon: "🗓️", val: detail.created_at ? `Terdaftar: ${fmtDate(detail.created_at)}` : null }, { icon: "📝", val: detail.notes }].filter(r => r.val).map((r, i) => <div key={i} className="flex items-start gap-3 text-sm text-gray-700 font-medium">
+                  <span className="shrink-0">{r.icon}</span>
+                  <span className="leading-snug">{r.val}</span>
+                </div>)}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => shareCard(detail)} className="flex-1 py-3.5 bg-brand text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>
+                  Bagikan Kartu
+                </button>
+                <button onClick={() => window.open(`https://wa.me/${detail.phone.replace(/^0/, "62")}`)} className="flex-1 py-3.5 bg-[#25D366] text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2">
+                  📱 WhatsApp
+                </button>
+              </div>
+
+              <div className="flex gap-2 pt-4 border-t border-gray-100">
+                <button onClick={() => openEdit(detail)} className="flex-1 py-3 bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1.5">✏️ Edit</button>
+                <button onClick={() => del(detail.id)} className="w-12 py-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl font-bold text-sm transition-colors flex items-center justify-center">🗑️</button>
               </div>
             </div>
           </Modal>}
 
-          {detail && <Modal onClose={() => setDetail(null)} title="Detail Pelanggan">
-            <div className="text-center mb-6">
-              <div className="w-20 h-20 rounded-full flex items-center justify-center text-white font-black text-4xl mx-auto mb-3 shadow-inner" style={{ background: `linear-gradient(135deg, ${color}, #2d9e5f)` }}>{detail.name[0]}</div>
-              <h2 className="font-extrabold text-xl text-gray-800">{detail.name}</h2>
-              {detail.gender && <p className="text-xs text-gray-500 font-medium mt-1">{detail.gender}</p>}
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-5">
-              <div className="bg-brandLight rounded-2xl p-4 text-center border border-brand/10">
-                <div className="text-3xl font-black text-brand mb-1">{custTx(detail.id).length}</div>
-                <div className="text-xs font-bold text-brand/70 uppercase tracking-wider">Transaksi</div>
+          {pointModal && <Modal onClose={() => setPointModal(null)} title={`Kelola Poin: ${pointModal.name}`}>
+            <div className="space-y-4">
+              <div className="bg-brandLight p-4 rounded-2xl border border-brand/10 text-center">
+                <div className="text-xs font-bold text-brand/60 uppercase tracking-widest mb-1">Saldo Saat Ini</div>
+                <div className="text-3xl font-black text-brand leading-none">⭐ {pointModal.points || 0}</div>
               </div>
-              <div className="bg-brandLight rounded-2xl p-4 text-center border border-brand/10 flex flex-col justify-center">
-                <div className="text-[17px] font-black text-brand mb-1 truncate">{fmt(custTotal(detail.id))}</div>
-                <div className="text-xs font-bold text-brand/70 uppercase tracking-wider">Total Belanja</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Tambah/Kurang</label>
+                  <input value={pointAdjust.amount} onChange={e => setPointAdjust(p => ({ ...p, amount: e.target.value }))} type="number" placeholder="cth: 50 atau -20" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Keterangan</label>
+                  <input value={pointAdjust.note} onChange={e => setPointAdjust(p => ({ ...p, note: e.target.value }))} placeholder="Alasan adjustment..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                </div>
               </div>
-            </div>
-            <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-3 mb-5">
-              {[{ icon: "📱", val: detail.phone }, { icon: "✉️", val: detail.email }, { icon: "📍", val: [detail.address, detail.city].filter(Boolean).join(", ") }, { icon: "🎂", val: detail.birthdate ? new Date(detail.birthdate).toLocaleDateString("id-ID") : null }, { icon: "📝", val: detail.notes }].filter(r => r.val).map((r, i) => <div key={i} className="flex items-start gap-3 text-sm text-gray-700 font-medium">
-                <span className="shrink-0">{r.icon}</span>
-                <span className="leading-snug">{r.val}</span>
-              </div>)}
-            </div>
-            {custTx(detail.id).length > 0 && <div>
-              <h4 className="font-bold text-sm text-gray-800 mb-3 uppercase tracking-wider">Riwayat Terakhir</h4>
-              <div className="flex flex-col gap-2">
-                {custTx(detail.id).slice(0, 5).map(t => <div key={t.id} className="flex justify-between items-center bg-white border border-gray-100 p-3 rounded-xl shadow-sm">
-                  <div>
-                    <div className="font-mono font-bold text-xs" style={{ color }}>{txCode(t.tx_code)}</div>
-                    <div className="text-[10px] text-gray-500 font-medium mt-0.5">{fmtDate(t.created_at)}</div>
-                  </div>
-                  <span className="font-black text-sm text-gray-800">{fmt(t.total)}</span>
-                </div>)}
+              <button onClick={adjustPoints} disabled={saving} className="w-full py-3.5 bg-brand text-white rounded-xl font-bold text-sm shadow-md transition-all">
+                {saving ? "Memproses..." : "Update Saldo Poin"}
+              </button>
+              <div className="pt-4 border-t border-gray-100">
+                 <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Riwayat Poin</h4>
+                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                   {pointLedger.length === 0 ? <div className="text-center text-gray-400 py-4 text-[10px] italic">Belum ada riwayat</div> : pointLedger.map(l => (
+                     <div key={l.id} className="flex justify-between items-center p-2.5 bg-gray-50 rounded-lg border border-gray-100 text-[11px]">
+                       <div>
+                         <div className="font-bold text-gray-800 uppercase tracking-tighter">{l.type.replace('_',' ')}</div>
+                         <div className="text-[9px] text-gray-400">{fmtDate(l.created_at)}</div>
+                       </div>
+                       <div className="text-right">
+                         <div className={`font-black ${l.points > 0 ? 'text-green-600' : 'text-red-500'}`}>{l.points > 0 ? '+' : ''}{l.points}</div>
+                         <div className="text-[9px] text-gray-400 truncate max-w-[100px]">{l.note || '-'}</div>
+                       </div>
+                     </div>
+                   ))}
+                 </div>
               </div>
-            </div>}
-            <div className="flex gap-2 mt-6 pt-4 border-t border-gray-100">
-              <button onClick={() => openEdit(detail)} className="flex-1 py-3 bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1.5">✏️ Edit</button>
-              <button onClick={() => window.open(`https://wa.me/${detail.phone.replace(/^0/, "62")}`)} className="flex-[1.5] py-3 bg-[#25D366] hover:bg-[#20bd5a] text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5">📱 WhatsApp</button>
-              <button onClick={() => del(detail.id)} className="w-12 py-3 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl font-bold text-sm transition-colors flex items-center justify-center">🗑️</button>
             </div>
           </Modal>}
         </div>
       );
     }
 
-    // ── PROMO ────────────────────────────────────────────────────
     function PromoPage({ promos, products, notify, onReload, color }) {
       const [modal, setModal] = useState(null);
       const empty = { name: "", type: "discount", disc_type: "pct", disc_value: "", min_purchase: "", max_discount: "", start_date: "", end_date: "", bundle_items: [], active: true };
@@ -979,6 +1650,7 @@
         </div>
       );
     }
+
 
     // ── LAPORAN ───────────────────────────────────────────────────
     function Laporan({ transactions, products, customers, notify, loading, color }) {

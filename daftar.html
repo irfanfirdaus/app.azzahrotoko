@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Daftar Member — Toko Azzahro</title>
+  <meta name="description" content="Daftar sebagai member Toko Azzahro dan nikmati poin reward di setiap transaksi." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: { brand: '#114232', brandLight: '#EDF2F0', gold: '#D4AF37', goldLight: '#FDF8E7', dark: '#0A2517' },
+          animation: {
+            'fade-up': 'fadeUp 0.4s ease-out',
+            'fade-in': 'fadeIn 0.3s ease-out',
+            'scale-in': 'scaleIn 0.5s cubic-bezier(0.34,1.56,0.64,1)',
+            'float': 'float 3s ease-in-out infinite',
+          },
+          keyframes: {
+            fadeUp: { '0%': { opacity: '0', transform: 'translateY(20px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            scaleIn: { '0%': { opacity: '0', transform: 'scale(0.8)' }, '100%': { opacity: '1', transform: 'scale(1)' } },
+            float: { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-8px)' } },
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body { background: linear-gradient(135deg, #0A2517 0%, #114232 50%, #1a6b3c 100%); min-height: 100vh; }
+    .glass { background: rgba(255,255,255,0.07); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.15); }
+    .card-member {
+      background: linear-gradient(135deg, #114232 0%, #1a6b3c 40%, #D4AF37 100%);
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      position: relative;
+      overflow: hidden;
+    }
+    .card-member::before {
+      content: '';
+      position: absolute;
+      top: -40px; right: -40px;
+      width: 160px; height: 160px;
+      background: rgba(255,255,255,0.07);
+      border-radius: 50%;
+    }
+    .card-member::after {
+      content: '';
+      position: absolute;
+      bottom: -60px; left: -20px;
+      width: 200px; height: 200px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 50%;
+    }
+    input:focus { outline: none; box-shadow: 0 0 0 3px rgba(17,66,50,0.2); }
+  </style>
+</head>
+
+<body class="font-sans antialiased">
+  <div id="root"></div>
+  <script type="text/babel">
+    const SUPABASE_URL = "https://xliwxtakluemverkgwrv.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXd4dGFrbHVlbXZlcmtnd3J2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1MjEzNTQsImV4cCI6MjA5MjA5NzM1NH0.XaP6ad5rvhA8EMlCSGy6FIoNltBMiDwQ4fLxe9BwVy8";
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { useState, useEffect, useRef } = React;
+
+    // Generate customer code client-side (fallback jika RPC belum ada)
+    async function generateCustomerCode() {
+      try {
+        const { data, error } = await db.rpc('generate_customer_code');
+        if (!error && data) return data;
+      } catch(_) {}
+      // Fallback: generate client-side
+      const now = new Date();
+      const pad = (n, l=2) => String(n).padStart(l, '0');
+      const yy = pad(now.getFullYear() % 100);
+      const mm = pad(now.getMonth() + 1);
+      const dd = pad(now.getDate());
+      const dateStr = yy + mm + dd;
+      const { data: existing } = await db.from('customers').select('customer_code').like('customer_code', `AZR-${dateStr}-%`);
+      const seq = (existing?.length || 0) + 1;
+      return `AZR-${dateStr}-${String(seq).padStart(4,'0')}`;
+    }
+
+    function Toast({ msg, type = 'success' }) {
+      if (!msg) return null;
+      return (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 px-5 py-3 rounded-full z-[9999] text-sm font-bold shadow-2xl whitespace-nowrap animate-fade-up text-white ${type === 'error' ? 'bg-red-500' : 'bg-brand'}`}>
+          {type === 'success' ? '✓ ' : '⚠ '}{msg}
+        </div>
+      );
+    }
+
+    function MemberCard({ customer, storeName, storeColor }) {
+      const color = storeColor || '#114232';
+      const joinDate = customer.created_at ? new Date(customer.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }) : new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' });
+
+      return (
+        <div className="card-member p-6 text-white animate-scale-in" style={{ background: `linear-gradient(135deg, #0A2517 0%, ${color} 50%, #D4AF37 100%)` }}>
+          <div className="relative z-10">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest opacity-70 mb-1">Member Card</div>
+                <div className="text-lg font-black leading-tight">{storeName || 'Toko Azzahro'}</div>
+              </div>
+              <div className="text-3xl animate-float">⭐</div>
+            </div>
+
+            <div className="bg-white/10 rounded-2xl p-4 mb-5 backdrop-blur-sm border border-white/20">
+              <div className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">ID Member</div>
+              <div className="font-mono font-black text-xl tracking-wider text-gold" style={{ color: '#D4AF37' }}>
+                {customer.customer_code || 'AZR-000000-0000'}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Nama Member</div>
+              <div className="font-extrabold text-lg truncate">{customer.name}</div>
+              {customer.phone && <div className="text-sm opacity-70 font-medium mt-0.5">{customer.phone}</div>}
+            </div>
+
+            <div className="flex justify-between items-end">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Bergabung</div>
+                <div className="text-sm font-bold opacity-90">{joinDate}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Saldo Poin</div>
+                <div className="text-2xl font-black text-white">{customer.points || 0} <span className="text-sm opacity-80">poin</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [storeSettings, setStoreSettings] = useState({ store_name: 'Toko Azzahro', store_tagline: 'Pilihan Berkah dari Tanah Suci', store_logo: '', receipt_color: '#114232', store_footer: 'Terima kasih, semoga berkah 🤲', points_per_10k: '1', points_to_rupiah: '100', min_redeem_points: '50' });
+      const [step, setStep] = useState('form'); // 'form' | 'success'
+      const [savedCustomer, setSavedCustomer] = useState(null);
+      const [toast, setToast] = useState({ msg: '', type: 'success' });
+      const [saving, setSaving] = useState(false);
+      const [form, setForm] = useState({ name: '', phone: '', email: '', gender: '', birthdate: '', address: '', city: '', notes: '', identity_type: 'KTP', identity_number: '', birthplace: '' });
+      const [errors, setErrors] = useState({});
+
+      const notify = (msg, type = 'success') => {
+        setToast({ msg, type });
+        setTimeout(() => setToast({ msg: '', type: 'success' }), 3000);
+      };
+
+      useEffect(() => {
+        db.from('settings').select('*').then(({ data }) => {
+          if (data?.length) {
+            const obj = {};
+            data.forEach(r => { obj[r.key] = r.value; });
+            setStoreSettings(s => ({ ...s, ...obj }));
+            // Update page title
+            if (obj.store_name) document.title = `Daftar Member — ${obj.store_name}`;
+          }
+        });
+
+        // Check for phone parameter
+        const params = new URLSearchParams(window.location.search);
+        const phone = params.get('phone');
+        if (phone) {
+          db.from('customers').select('*').eq('phone', phone).maybeSingle().then(({ data }) => {
+            if (data) {
+              setSavedCustomer(data);
+              setStep('success');
+            }
+          });
+        }
+      }, []);
+
+      const color = storeSettings.receipt_color || '#114232';
+
+      const validate = () => {
+        const e = {};
+        if (!form.name.trim()) e.name = 'Nama wajib diisi';
+        if (!form.phone.trim()) e.phone = 'No. HP wajib diisi';
+        else if (!/^[0-9+\-\s]{8,15}$/.test(form.phone.trim())) e.phone = 'Format HP tidak valid';
+        if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Format email tidak valid';
+        if (form.identity_type === 'KTP' && form.identity_number && !/^\d+$/.test(form.identity_number)) e.identity_number = 'KTP harus berupa angka';
+        if (form.identity_type === 'Paspor' && form.identity_number && !/^[a-zA-Z0-9]+$/.test(form.identity_number)) e.identity_number = 'Paspor harus huruf & angka';
+        setErrors(e);
+        return Object.keys(e).length === 0;
+      };
+
+      const handleSubmit = async () => {
+        if (!validate()) return notify('Mohon perbaiki data yang salah', 'error');
+        setSaving(true);
+        try {
+          // Cek apakah nomor HP sudah terdaftar
+          const { data: existing } = await db.from('customers').select('id, name, customer_code, points, created_at').eq('phone', form.phone.trim()).maybeSingle();
+          if (existing) {
+            // Pelanggan sudah terdaftar, tampilkan kartu mereka
+            setSavedCustomer(existing);
+            setStep('success');
+            notify(`Anda sudah terdaftar sebagai member!`);
+            setSaving(false);
+            return;
+          }
+
+          // Generate customer code
+          const customerCode = await generateCustomerCode();
+
+          const payload = {
+            name: form.name.trim(),
+            phone: form.phone.trim(),
+            email: form.email.trim() || null,
+            gender: form.gender || null,
+            birthdate: form.birthdate || null,
+            address: form.address.trim() || null,
+            city: form.city.trim() || null,
+            notes: form.notes.trim() || null,
+            customer_code: customerCode,
+            points: 0,
+            identity_type: form.identity_type,
+            identity_number: form.identity_number,
+            birthplace: form.birthplace
+          };
+
+          const { data, error } = await db.from('customers').insert(payload).select().single();
+          if (error) throw error;
+
+          setSavedCustomer(data);
+          setStep('success');
+          notify('Selamat! Anda berhasil terdaftar sebagai member! 🎉');
+          // Kirim pesan ke parent jika diembed dalam iframe
+          window.parent.postMessage({ type: 'CUSTOMER_ADDED', customer: data }, '*');
+        } catch (e) {
+          console.error(e);
+          notify('Gagal mendaftar: ' + (e.message || 'Coba lagi'), 'error');
+        }
+        setSaving(false);
+      };
+
+      const f = (key, label, type = 'text', ph = '', required = false) => (
+        <div key={key}>
+          <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wider">
+            {label}{required && <span className="text-red-400 ml-0.5">*</span>}
+          </label>
+          <input
+            value={form[key]}
+            onChange={e => { setForm(p => ({ ...p, [key]: e.target.value })); if (errors[key]) setErrors(p => ({ ...p, [key]: '' })); }}
+            type={type}
+            placeholder={ph}
+            className={`w-full px-4 py-3 bg-gray-50 border rounded-xl text-sm transition-all ${errors[key] ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-brand'}`}
+          />
+          {errors[key] && <p className="text-xs text-red-500 font-medium mt-1">{errors[key]}</p>}
+        </div>
+      );
+
+      const shareCard = async () => {
+        const url = `${window.location.origin}${window.location.pathname}?phone=${savedCustomer.phone}`;
+        const text = `🎉 Kartu Member ${storeSettings.store_name}\n\nNama: ${savedCustomer.name}\nID Member: ${savedCustomer.customer_code}\n\nCek kartu digital Anda di sini: ${url}\n\n${storeSettings.store_footer || 'Terima kasih telah bergabung!'}`;
+        try {
+          if (navigator.share) {
+            await navigator.share({ title: `Member ${storeSettings.store_name}`, text, url });
+          } else {
+            throw new Error('Share not supported');
+          }
+        } catch(_) {
+          await navigator.clipboard.writeText(text);
+          notify('Teks kartu disalin!');
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          <Toast msg={toast.msg} type={toast.type} />
+
+          {/* Header */}
+          <header className="px-6 pt-8 pb-4 text-center">
+            {storeSettings.store_logo && (
+              <img src={storeSettings.store_logo} alt="logo" className="h-12 mx-auto mb-3 object-contain" onError={e => e.target.style.display = 'none'} />
+            )}
+            <div className="text-white font-black text-2xl leading-tight">{storeSettings.store_name}</div>
+            <div className="text-white/60 text-sm font-medium mt-1">{storeSettings.store_tagline}</div>
+          </header>
+
+          {/* Content */}
+          <main className="flex-1 px-4 pb-10 max-w-md mx-auto w-full">
+            {step === 'form' && (
+              <div className="animate-fade-up">
+                {/* Benefits Banner */}
+                <div className="glass rounded-2xl p-4 mb-6 text-white">
+                  <div className="text-xs font-bold uppercase tracking-widest opacity-70 mb-3 text-center">Keuntungan Member</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { icon: '⭐', label: `${storeSettings.points_per_10k || 1} poin/Rp10rb`, desc: 'Setiap belanja' },
+                      { icon: '🎁', label: `1 Poin = Rp${storeSettings.points_to_rupiah || 100}`, desc: 'Nilai Redeem' },
+                      { icon: '🛍️', label: 'Promo Ekslusif', desc: 'Member only' },
+                    ].map(b => (
+                      <div key={b.icon} className="text-center">
+                        <div className="text-2xl mb-1">{b.icon}</div>
+                        <div className="text-[10px] font-bold leading-tight">{b.label}</div>
+                        <div className="text-[9px] opacity-60">{b.desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Form */}
+                <div className="bg-white rounded-3xl p-6 shadow-2xl">
+                  <h1 className="text-xl font-black text-gray-800 mb-1">Daftar Member</h1>
+                  <p className="text-sm text-gray-500 font-medium mb-6">Isi data di bawah untuk mendapatkan kartu member dan mulai kumpulkan poin.</p>
+
+                  <div className="space-y-4">
+                    {/* Gender */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wider">Jenis Kelamin</label>
+                      <div className="flex gap-2">
+                        {['Laki-laki', 'Perempuan'].map(g => (
+                          <button key={g} type="button" onClick={() => setForm(p => ({ ...p, gender: p.gender === g ? '' : g }))}
+                            className={`flex-1 py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${form.gender === g ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 text-gray-400 hover:border-gray-200'}`}>
+                            {g === 'Laki-laki' ? '👨 ' : '👩 '}{g}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wider">Tipe Identitas</label>
+                        <select value={form.identity_type} onChange={e => setForm(p => ({ ...p, identity_type: e.target.value }))} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:border-brand outline-none">
+                          <option>KTP</option>
+                          <option>Paspor</option>
+                          <option>Lainnya</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wider">No. Identitas</label>
+                        <input value={form.identity_number} onChange={e => { setForm(p => ({ ...p, identity_number: e.target.value })); if (errors.identity_number) setErrors(p => ({ ...p, identity_number: '' })); }} placeholder="Nomor kartu..." className={`w-full px-4 py-3 bg-gray-50 border rounded-xl text-sm transition-all ${errors.identity_number ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-brand'}`} />
+                        {errors.identity_number && <p className="text-xs text-red-500 font-medium mt-1">{errors.identity_number}</p>}
+                      </div>
+                    </div>
+
+                    {f('name', 'Nama Lengkap', 'text', 'Sesuai KTP...', true)}
+                    {f('phone', 'No. HP / WhatsApp', 'tel', '08xxxxxxxxxx', true)}
+                    {f('email', 'Email', 'email', 'email@domain.com')}
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      {f('birthplace', 'Kota Lahir', 'text', 'cth: Semarang')}
+                      {f('birthdate', 'Tanggal Lahir', 'date', '')}
+                    </div>
+
+                    {f('address', 'Alamat', 'text', 'Alamat domisili...')}
+                    {f('city', 'Kota', 'text', 'cth: Semarang')}
+
+                    <div>
+                      <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wider">Catatan</label>
+                      <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Referensi, dll" rows={2} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:border-brand outline-none resize-none" />
+                    </div>
+
+                    <button
+                      id="btn-daftar"
+                      onClick={handleSubmit}
+                      disabled={saving}
+                      className="w-full py-4 rounded-2xl font-black text-white text-base shadow-lg transition-all active:scale-[0.98] disabled:opacity-60 mt-2 flex items-center justify-center gap-2"
+                      style={{ background: `linear-gradient(135deg, ${color}, #1a6b3c)` }}
+                    >
+                      {saving ? (
+                        <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Mendaftar...</span></>
+                      ) : (
+                        <><span>🌟</span><span>Daftar Sekarang</span></>
+                      )}
+                    </button>
+
+                    <p className="text-[10px] text-gray-400 text-center leading-relaxed">
+                      Dengan mendaftar, Anda setuju data Anda disimpan untuk keperluan program loyalitas {storeSettings.store_name}.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {step === 'success' && savedCustomer && (
+              <div className="animate-fade-up space-y-5">
+                {/* Success Message */}
+                <div className="text-center text-white py-2">
+                  <div className="text-5xl mb-2 animate-float">🎉</div>
+                  <div className="text-xl font-black">Selamat Bergabung!</div>
+                  <div className="text-white/70 text-sm font-medium mt-1">Kartu member Anda telah siap</div>
+                </div>
+
+                {/* Member Card */}
+                <MemberCard customer={savedCustomer} storeName={storeSettings.store_name} storeColor={color} />
+
+                {/* Info Box */}
+                <div className="glass rounded-2xl p-5 text-white">
+                  <div className="text-xs font-bold uppercase tracking-widest opacity-70 mb-3">Cara Pakai Kartu Member</div>
+                  <div className="space-y-2.5">
+                    {[
+                      ['1️⃣', 'Tunjukkan ID Member Anda saat berbelanja di kasir'],
+                      ['2️⃣', `Dapatkan ${storeSettings.points_per_10k || 1} poin untuk setiap Rp 10.000 belanja`],
+                      ['3️⃣', `Tukarkan poin sebagai diskon (1 poin = Rp ${storeSettings.points_to_rupiah || 100})`],
+                    ].map(([icon, text]) => (
+                      <div key={icon} className="flex items-start gap-3">
+                        <span className="text-lg shrink-0">{icon}</span>
+                        <p className="text-sm font-medium opacity-90 leading-snug">{text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={shareCard}
+                    className="py-3.5 rounded-xl font-bold text-white text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.97]"
+                    style={{ background: color }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                    </svg>
+                    Bagikan
+                  </button>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(savedCustomer.customer_code || ''); notify('ID Member disalin!'); }}
+                    className="py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.97] bg-white/15 text-white border border-white/20 backdrop-blur-sm"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                    </svg>
+                    Salin ID
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => { setStep('form'); setSavedCustomer(null); setForm({ name: '', phone: '', email: '', gender: '', birthdate: '', address: '', city: '', notes: '' }); }}
+                  className="w-full py-3 rounded-xl font-bold text-white/60 text-sm hover:text-white transition-colors text-center"
+                >
+                  ← Daftarkan Member Lain
+                </button>
+
+                <div className="text-center">
+                  <div className="text-white/40 text-xs font-medium">{storeSettings.store_footer}</div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+
+</html>
