@@ -87,10 +87,10 @@
     };
 
     function Toast({ msg }) { if (!msg) return null; return <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-dark text-white px-5 py-2.5 rounded-full z-[9999] text-sm font-medium shadow-xl whitespace-nowrap animate-fade-up">{msg}</div>; }
-    function Modal({ children, onClose, title }) {
+    function Modal({ children, onClose, title, full, wide }) {
       return (
         <div className="fixed inset-0 bg-black/50 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4 transition-opacity" onClick={onClose}>
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl flex flex-col w-full max-w-md max-h-[90vh] animate-fade-up shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className={`bg-white rounded-t-2xl sm:rounded-2xl flex flex-col w-full animate-fade-up shadow-2xl max-h-[90vh] ${full ? 'max-w-4xl h-[90vh] sm:h-[85vh]' : wide ? 'max-w-3xl' : 'max-w-md'}`} onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center p-5 border-b border-gray-100 shrink-0">
               <h3 className="font-extrabold text-lg text-gray-900">{title}</h3>
               <button onClick={onClose} className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 font-bold transition-colors">✕</button>
@@ -226,11 +226,40 @@
       const [extraLinks, setExtraLinks] = useState(parseLinks);
       const [layout, setLayout] = useState(parseLayout);
 
+      // ── MAINTENANCE ──
+      const [maintenance, setMaintenance] = useState({
+        maintenance_mode: settings.maintenance_mode === 'true',
+        maintenance_text: settings.maintenance_text || "Maaf, katalog kami sedang dalam pemeliharaan untuk meningkatkan layanan. Silakan kembali lagi nanti.",
+        maintenance_image: settings.maintenance_image || "",
+        maintenance_btn_text: settings.maintenance_btn_text || "Hubungi via WhatsApp",
+        maintenance_btn_link: settings.maintenance_btn_link || "",
+        maintenance_bg_type: settings.maintenance_bg_type || "color",
+        maintenance_bg_val: settings.maintenance_bg_val || "#114232",
+      });
+
       useEffect(() => {
         setAbout({ about_hero_image: settings.about_hero_image || "", about_description: settings.about_description || "", about_cta_label: settings.about_cta_label || "Hubungi Kami via WhatsApp" });
         setServices(parseServices()); setExtraLinks(parseLinks());
         setLayout(parseLayout());
+        setMaintenance({
+          maintenance_mode: settings.maintenance_mode === 'true',
+          maintenance_text: settings.maintenance_text || "Maaf, katalog kami sedang dalam pemeliharaan untuk meningkatkan layanan. Silakan kembali lagi nanti.",
+          maintenance_image: settings.maintenance_image || "",
+          maintenance_btn_text: settings.maintenance_btn_text || "Hubungi via WhatsApp",
+          maintenance_btn_link: settings.maintenance_btn_link || "",
+          maintenance_bg_type: settings.maintenance_bg_type || "color",
+          maintenance_bg_val: settings.maintenance_bg_val || "#114232",
+        });
       }, [settings]);
+
+      const saveMaintenance = async () => {
+        setSaving(true);
+        const pairs = Object.entries(maintenance).map(([k, v]) => ({ key: k, value: String(v) }));
+        for (const { key, value } of pairs) {
+          await db.from("settings").upsert({ key, value }, { onConflict: "key" });
+        }
+        setSaving(false); notify("Pengaturan Maintenance disimpan!"); onReload();
+      };
 
       const saveAbout = async () => {
         setSaving(true);
@@ -260,6 +289,7 @@
             <button onClick={() => setTab("banner")} className={tabCls("banner")}>🖼 Banner</button>
             <button onClick={() => setTab("tentang")} className={tabCls("tentang")}>🏪 Tentang Kami</button>
             <button onClick={() => setTab("layout")} className={tabCls("layout")}>⚙️ Layout</button>
+            <button onClick={() => setTab("maintenance")} className={tabCls("maintenance")}>🔧 Maintenance</button>
           </div>
 
           {tab === "banner" && (
@@ -415,6 +445,75 @@
                 setSaving(false); notify("Layout disimpan!"); onReload();
               }} disabled={saving} className="w-full py-3 bg-brand text-white font-bold rounded-xl shadow-md hover:bg-dark transition-all disabled:opacity-50">
                 {saving ? "Menyimpan..." : "Simpan Pengaturan Layout"}
+              </button>
+            </div>
+          )}
+
+          {tab === "maintenance" && (
+            <div className="space-y-4 animate-fade-up pb-8">
+              <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                <h3 className="font-bold text-gray-800 mb-2 border-b pb-2">Pengaturan Under Construction (Maintenance)</h3>
+                
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+                  <div>
+                    <div className="font-bold text-gray-800 text-sm">Aktifkan Maintenance Mode</div>
+                    <div className="text-xs text-gray-500">Katalog akan menampilkan halaman "Under Construction".</div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={maintenance.maintenance_mode} onChange={e => setMaintenance(m => ({...m, maintenance_mode: e.target.checked}))} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
+                  </label>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Pesan Maintenance</label>
+                    <textarea value={maintenance.maintenance_text} onChange={e => setMaintenance(m => ({...m, maintenance_text: e.target.value}))} rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Ilustrasi (opsional)</label>
+                    <input value={maintenance.maintenance_image} onChange={e => setMaintenance(m => ({...m, maintenance_image: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teks Tombol</label>
+                      <input value={maintenance.maintenance_btn_text} onChange={e => setMaintenance(m => ({...m, maintenance_btn_text: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link Tombol (WA / URL)</label>
+                      <input value={maintenance.maintenance_btn_link} onChange={e => setMaintenance(m => ({...m, maintenance_btn_link: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Biarkan kosong untuk WA default" />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-gray-100 mt-4">
+                    <div className="font-bold text-gray-800 text-sm mb-3">Pengaturan Background</div>
+                    <div className="flex gap-2 mb-3">
+                      <button onClick={() => setMaintenance(m => ({...m, maintenance_bg_type: 'color'}))} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${maintenance.maintenance_bg_type === 'color' ? 'bg-dark text-white' : 'bg-gray-100 text-gray-500'}`}>Warna Solid</button>
+                      <button onClick={() => setMaintenance(m => ({...m, maintenance_bg_type: 'image'}))} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${maintenance.maintenance_bg_type === 'image' ? 'bg-dark text-white' : 'bg-gray-100 text-gray-500'}`}>Gambar Background</button>
+                    </div>
+                    
+                    {maintenance.maintenance_bg_type === 'color' ? (
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Warna Background (Hex)</label>
+                        <div className="flex gap-2">
+                          <input type="color" value={maintenance.maintenance_bg_val.startsWith('#') ? maintenance.maintenance_bg_val : '#114232'} onChange={e => setMaintenance(m => ({...m, maintenance_bg_val: e.target.value}))} className="w-12 h-10 rounded-xl border border-gray-200 cursor-pointer" />
+                          <input value={maintenance.maintenance_bg_val} onChange={e => setMaintenance(m => ({...m, maintenance_bg_val: e.target.value}))} className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="#114232" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Background</label>
+                        <input value={maintenance.maintenance_bg_val} onChange={e => setMaintenance(m => ({...m, maintenance_bg_val: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={saveMaintenance} disabled={saving} className="w-full py-4 bg-brand text-white font-bold rounded-2xl shadow-lg hover:bg-dark transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {saving ? "Menyimpan..." : <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan Pengaturan Maintenance</>}
               </button>
             </div>
           )}
@@ -789,7 +888,7 @@
             // Partial match: if this new combo contains an old variant name, inherit its values
             const partial = f.variants.find(v => name.includes(v.name) || v.name.includes(name));
             if (partial) return { ...partial, name, sku: f.sku ? `${f.sku}-${suffix}` : "" };
-            return { sku: f.sku ? `${f.sku}-${suffix}` : "", name, cost_price: 0, price: 0, stock: 0, weight: "", weight_unit: f.weight_unit || "g" };
+            return { sku: f.sku ? `${f.sku}-${suffix}` : "", name, cost_price: 0, price: 0, stock: 0, is_po: false, weight: "", weight_unit: f.weight_unit || "g" };
           });
           return { ...f, variants: newVariants };
         });
@@ -818,7 +917,7 @@
           promo_price: parseInt(v.promo_price)||0,
           promo_percentage: parseInt(v.promo_percentage)||0,
           stock: parseInt(v.stock)||0,
-          is_po: !!form.is_po,
+          is_po: !!v.is_po,
           weight: v.weight,
           weight_unit: v.weight_unit || "g",
           active: true
@@ -869,7 +968,7 @@
           category: first.category, sub_category: first.sub_category || "", etalase: first.etalase || "", is_po: first.is_po || false, weight: first.weight || "", weight_unit: first.weight_unit || "g",
           has_variants: variants.length > 0,
           variant_types: (first.variant_options || []).map(vt => ({ name: vt.name, options_string: (vt.options || []).join(", ") })),
-          variants: variants.map(v => ({ sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, promo_price: v.promo_price, promo_percentage: v.promo_percentage, stock: v.stock, weight: v.weight, weight_unit: v.weight_unit })),
+          variants: variants.map(v => ({ sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, promo_price: v.promo_price, promo_percentage: v.promo_percentage, stock: v.stock, is_po: !!v.is_po, weight: v.weight, weight_unit: v.weight_unit })),
           image_url: first.image_url || ""
         });
       };
@@ -969,7 +1068,7 @@
             </div>)}
           </div>
 
-          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Produk" : "Edit Produk"}>
+          {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Produk" : "Edit Produk"} wide={true}>
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Etalase (Opsional)</label>
@@ -1111,7 +1210,7 @@
                     <span className="text-[10px] text-gray-400 font-medium">{form.variants.length} kombinasi</span>
                   </div>
                   <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-                    <table className="w-full text-left border-collapse min-w-[800px]">
+                    <table className="w-full text-left border-collapse min-w-[950px]">
                       <thead>
                         <tr className="border-b border-gray-100">
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">Varian</th>
@@ -1121,6 +1220,7 @@
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Promo</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">Diskon%</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%] text-center">Stok</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[5%] text-center">PO</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">Berat</th>
                         </tr>
                       </thead>
@@ -1133,6 +1233,7 @@
                           <td className="py-2 pr-2"><input value={v.promo_price || ""} onChange={e => { const val=parseInt(e.target.value)||0; setForm(f=>{const nv=[...f.variants]; nv[i].promo_price=val; nv[i].promo_percentage=nv[i].price?Math.round(((nv[i].price-val)/nv[i].price)*100):0; return {...f,variants:nv};}); }} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none text-orange-600 font-bold" /></td>
                           <td className="py-2 pr-2"><input value={v.promo_percentage || ""} onChange={e => { const val=parseInt(e.target.value)||0; setForm(f=>{const nv=[...f.variants]; nv[i].promo_percentage=val; nv[i].promo_price=nv[i].price?Math.round(nv[i].price-(nv[i].price*val/100)):0; return {...f,variants:nv};}); }} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
                           <td className="py-2 pr-2"><input value={v.stock || ""} onChange={e => updateVarItem(i, 'stock', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
+                          <td className="py-2 pr-2 text-center"><input type="checkbox" checked={!!v.is_po} onChange={e => updateVarItem(i, 'is_po', e.target.checked)} className="w-4 h-4 rounded text-brand focus:ring-brand" /></td>
                           <td className="py-2">
                             <div className="flex bg-white border border-gray-200 rounded overflow-hidden">
                               <input value={v.weight || ""} onChange={e => updateVarItem(i, 'weight', e.target.value)} type="number" placeholder="0" className="w-full px-2 py-1.5 text-xs focus:outline-none" />
@@ -2215,7 +2316,7 @@
 
           {tab === "toko" && <div className="animate-fade-up">
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-5 space-y-4">
-              {[{ label: "Nama Toko", key: "store_name", ph: "Toko Oleh-Oleh Haji & Umroh" }, { label: "Tagline", key: "store_tagline", ph: "Pilihan Berkah dari Tanah Suci" }, { label: "Alamat Lengkap", key: "store_address", ph: "Jl. Contoh No. 1, Semarang" }, { label: "No. Telepon", key: "store_phone", ph: "08xxxxxxxxxx" }, { label: "No. WhatsApp Admin", key: "wa_number", ph: "628xxxxxxxxxx" }, { label: "URL Logo (Image)", key: "store_logo", ph: "https://..." }].map(f => <div key={f.key}>
+              {[{ label: "Nama Toko", key: "store_name", ph: "Toko Oleh-Oleh Haji & Umroh" }, { label: "Tagline", key: "store_tagline", ph: "Pilihan Berkah dari Tanah Suci" }, { label: "Alamat Lengkap", key: "store_address", ph: "Jl. Contoh No. 1, Semarang" }, { label: "No. Telepon", key: "store_phone", ph: "08xxxxxxxxxx" }, { label: "No. WhatsApp Admin", key: "wa_number", ph: "628xxxxxxxxxx" }, { label: "URL Logo (Image)", key: "store_logo", ph: "https://..." }, { label: "Nomor Rekening Bank", key: "store_bank_account", ph: "BCA 1234567890 a/n Toko Azzahro" }, { label: "URL Gambar QR Code (Pembayaran)", key: "store_qr_image", ph: "https://..." }].map(f => <div key={f.key}>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
                 <input value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
               </div>)}
