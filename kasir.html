@@ -14,6 +14,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -621,6 +622,9 @@
       const [activeOnlineOrder, setActiveOnlineOrder] = useState(null);
       const [activeHoldTx, setActiveHoldTx] = useState(null);
       const [printerSize, setPrinterSize] = useState("58mm");
+      const [btDevice, setBtDevice] = useState(null);
+      const [btCharacteristic, setBtCharacteristic] = useState(null);
+      const [isBtConnecting, setIsBtConnecting] = useState(false);
       const CATS = settings?.product_categories ? ["Semua Produk", ...settings.product_categories.split(",").map(c => c.trim()).filter(Boolean)] : ["Semua Produk", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
       const ETALASE_LIST = settings?.product_etalase ? ["Semua Etalase", ...settings.product_etalase.split(",").map(c => c.trim()).filter(Boolean)] : ["Semua Etalase"];
 
@@ -700,6 +704,205 @@
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
       }, []);
+
+      const connectBluetooth = async () => {
+        setIsBtConnecting(true);
+        try {
+          const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: [
+              '000018f0-0000-1000-8000-00805f9b34fb', 
+              '0000ff00-0000-1000-8000-00805f9b34fb', 
+              '0000ffe0-0000-1000-8000-00805f9b34fb'
+            ]
+          });
+          
+          setBtDevice(device);
+          notify(`Menghubungkan ke ${device.name || 'Printer'}...`);
+          
+          const server = await device.gatt.connect();
+          
+          const services = await server.getPrimaryServices();
+          let char = null;
+          
+          for (const service of services) {
+            const chars = await service.getCharacteristics();
+            char = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+            if (char) break;
+          }
+          
+          if (!char) throw new Error("Karakteristik penulisan tidak ditemukan.");
+          
+          setBtCharacteristic(char);
+          notify(`Terhubung ke ${device.name || 'Printer'}`);
+          
+          device.addEventListener('gattserverdisconnected', () => {
+            setBtDevice(null);
+            setBtCharacteristic(null);
+            notify("Printer terputus.");
+          });
+          
+        } catch (e) {
+          console.error("Bluetooth Error:", e);
+          notify("Gagal: " + e.message);
+        } finally {
+          setIsBtConnecting(false);
+        }
+      };
+
+      const printBluetooth = async (tx) => {
+        if (!btCharacteristic) return notify("Printer belum terhubung!");
+        
+        try {
+          notify("Mencetak...");
+          
+          // Helper untuk membersihkan teks dari emoji dan karakter non-ASCII
+          const cleanText = (txt) => {
+            if (!txt) return "";
+            return txt
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "") // Hapus aksen
+              .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '') // Hapus emoji
+              .replace(/[^\x20-\x7E]/g, ' '); // Ganti karakter non-printable/non-ASCII dengan spasi
+          };
+          
+          // Formatter khusus printer agar tidak ada karakter aneh di "Rp"
+          const fmtPrint = (n) => {
+            const numStr = new Intl.NumberFormat("id-ID").format(n);
+            return "Rp" + numStr;
+          };
+          
+          const maxChars = printerSize === "80mm" ? 42 : 32;
+          const line = "-".repeat(maxChars) + "\n";
+          
+          const alignCenter = "\x1b\x61\x01";
+          const alignLeft = "\x1b\x61\x00";
+          const alignRight = "\x1b\x61\x02";
+          const boldOn = "\x1b\x45\x01";
+          const boldOff = "\x1b\x45\x00";
+          const init = "\x1b\x40";
+          
+          let data = "";
+          data += init;
+          data += alignCenter;
+          data += boldOn + cleanText(settings?.store_name || "TOKO AZZAHRO").toUpperCase() + "\n" + boldOff;
+          data += cleanText(settings?.store_address || "Alamat Toko") + "\n";
+          data += line;
+          data += alignLeft;
+          data += `No: ${tx.tx_code}\n`;
+          data += `Tgl: ${new Date().toLocaleDateString("id-ID")}\n`;
+          data += `Kasir: ${tx.cashier_name}\n`;
+          if (tx.customer_name) data += `Plg: ${cleanText(tx.customer_name)}\n`;
+          data += line;
+          
+          tx.items.forEach(i => {
+            const name = cleanText(i.name + (i.variant_name || i.vName ? ` (${i.variant_name || i.vName})` : ""));
+            data += `${name}\n`;
+            
+            const priceStr = fmtPrint(i.price);
+            const qtyStr = `${i.qty} x `;
+            const totalStr = fmtPrint(i.qty * i.price);
+            
+            let left = `  ${qtyStr}${priceStr}`;
+            
+            // Tambahkan harga asli jika ada diskon
+            if (i.normalPrice && i.normalPrice > i.price) {
+              const normalStr = `(${fmtPrint(i.normalPrice)}) `;
+              left = `  ${qtyStr}${normalStr}${priceStr}`;
+            }
+            
+            const spaces = maxChars - left.length - totalStr.length;
+            data += left + " ".repeat(Math.max(1, spaces)) + totalStr + "\n";
+          });
+          
+          data += line;
+          
+          // Total
+          const totLabel = "TOTAL";
+          const totVal = fmtPrint(tx.total);
+          data += boldOn + totLabel + " ".repeat(maxChars - totLabel.length - totVal.length) + totVal + "\n" + boldOff;
+          
+          if (tx.pay_method === "Cash") {
+            const tunaiLabel = "TUNAI";
+            const tunaiVal = fmtPrint(tx.cash_received);
+            data += tunaiLabel + " ".repeat(maxChars - tunaiLabel.length - tunaiVal.length) + tunaiVal + "\n";
+            
+            const kembaliLabel = "KEMBALI";
+            const kembaliVal = fmtPrint(tx.change_amount);
+            data += kembaliLabel + " ".repeat(maxChars - kembaliLabel.length - kembaliVal.length) + kembaliVal + "\n";
+          }
+          
+          // Diskon dan Hemat
+          const productDisc = (tx.items || []).reduce((s, x) => s + (Math.max(0, Number(x.normalPrice || x.price) - Number(x.price || 0))) * x.qty, 0);
+          const totHemat = (tx.discount_total || 0) + productDisc;
+          
+          if (totHemat > 0) {
+            data += line;
+            const hematLabel = "TOTAL HEMAT";
+            const hematVal = fmtPrint(totHemat);
+            data += boldOn + hematLabel + " ".repeat(maxChars - hematLabel.length - hematVal.length) + hematVal + "\n" + boldOff;
+          }
+          
+          data += line;
+          data += alignCenter;
+          data += cleanText(settings?.store_footer || "Terima Kasih") + "\n";
+          data += "\n\n\n"; // Feed lines
+          
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(data);
+          
+          for (let i = 0; i < bytes.length; i += 20) {
+            const chunk = bytes.slice(i, i + 20);
+            await btCharacteristic.writeValue(chunk);
+          }
+          
+          notify("Berhasil dicetak!");
+          
+        } catch (e) {
+          console.error("Print Error:", e);
+          notify("Gagal cetak: " + e.message);
+        }
+      };
+
+      const generatePDF = async () => {
+        const element = document.getElementById('print-area');
+        if (!element) return notify("Area cetak tidak ditemukan!");
+        
+        notify("Menyusun PDF...");
+        
+        const pdfWidth = printerSize === "80mm" ? 3.15 : 2.28;
+        const opt = {
+          margin:       0.1,
+          filename:     `Nota-${txData.tx_code}.pdf`,
+          image:        { type: 'jpeg', quality: 0.98 },
+          html2canvas:  { scale: 2, useCORS: true },
+          jsPDF:        { unit: 'in', format: [pdfWidth, 11], orientation: 'portrait' }
+        };
+        
+        try {
+          const blob = await html2pdf().from(element).set(opt).output('blob');
+          const file = new File([blob], `Nota-${txData.tx_code}.pdf`, { type: 'application/pdf' });
+          
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: 'Nota Transaksi',
+              text: `Berikut nota transaksi #${txData.tx_code}`
+            });
+          } else {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Nota-${txData.tx_code}.pdf`;
+            a.click();
+            URL.revokeObjectURL(url);
+            notify("PDF diunduh (Sharing tidak didukung di browser ini).");
+          }
+        } catch (e) {
+          console.error("PDF Error:", e);
+          notify("Gagal membuat PDF: " + e.message);
+        }
+      };
 
       const grouped = useMemo(() => {
         const map = {};
@@ -1334,6 +1537,12 @@
               <div className="font-black text-lg text-green-700">Pembayaran Berhasil</div>
               <div className="text-xs font-semibold mt-1 font-mono uppercase bg-white/50 text-green-600 inline-block px-2 py-0.5 rounded border border-green-200">#{txData.tx_code}</div>
             </div>
+            <div className="flex justify-center mb-4">
+              <button onClick={connectBluetooth} disabled={isBtConnecting} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${btDevice ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-brandLight text-brand border border-brand/20 hover:bg-brand/10'}`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 7h10M7 12h10M7 17h10"/></svg>
+                {isBtConnecting ? 'Menghubungkan...' : btDevice ? `Terhubung: ${btDevice.name || 'Printer'}` : 'Hubungkan Printer Bluetooth'}
+              </button>
+            </div>
             <div className="flex justify-center gap-2 mb-4">
                 <button onClick={() => setPrinterSize("58mm")} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${printerSize === "58mm" ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>58mm</button>
                 <button onClick={() => setPrinterSize("80mm")} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${printerSize === "80mm" ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>80mm</button>
@@ -1369,14 +1578,18 @@
               )}
               <div className="text-center mt-3 pt-2 border-t border-gray-400">{settings?.store_footer || "Terima Kasih"}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-5">
-              <button onClick={() => window.print()} className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-xs transition-all border border-gray-200 flex items-center justify-center gap-1.5">
+            <div className="grid grid-cols-3 gap-2 mt-5">
+              <button onClick={() => btCharacteristic ? printBluetooth(txData) : window.print()} className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-xs transition-all border border-gray-200 flex items-center justify-center gap-1.5">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                Cetak
+                {btCharacteristic ? 'Cetak BT' : 'Cetak'}
+              </button>
+              <button onClick={generatePDF} className="py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                PDF
               </button>
               <button onClick={() => {
                 const items = (txData.items||[]).map(i=>`${i.name}${i.variant_name?` (${i.variant_name})`:''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
-                const text = `*${(settings?.store_name||'Toko Azzahro').toUpperCase()}*\n${settings?.store_address||''}\n\nNo: ${txData.tx_code}\nKasir: ${txData.cashier_name}\nTgl: ${new Date().toLocaleDateString('id-ID')}\n\n--- ITEM ---\n${items}\n\nTotal: ${fmt(txData.total)}\nBayar: ${fmt(txData.cash_received)} (${txData.pay_method})\n${txData.change_amount>0?`Kembali: ${fmt(txData.change_amount)}`:''}\n\n${settings?.store_footer||'Terima kasih!'}`;
+                const text = `*${(settings?.store_name||'Toko Azzahro').toUpperCase()}*\n${settings?.store_address||''}\n\nNo: ${txData.tx_code}\nKasir: ${txData.cashier_name}\nTgl: ${new Date().toLocaleDateString('id-ID')}\n\n--- ITEM ---\n${items}\n\nTotal: ${fmt(txData.total)}\nBayar: ${fmt(txData.cash_received)} (${txData.pay_method})\n${txData.change_amount>0?`Kembali: ${fmt(txData.change_amount)}`:''}\n\n${settings?.store_footer||'Terima terima kasih!'}`;
                 const phone = txData.customer_id ? customers.find(c=>c.id===txData.customer_id)?.phone : null;
                 window.open(`https://wa.me/${phone ? phone.replace(/[^0-9]/g,'') : ''}?text=${encodeURIComponent(text)}`);
               }} className="py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5">
@@ -1385,16 +1598,16 @@
               </button>
               <button onClick={async () => {
                 try { await navigator.share({ title: 'Nota Transaksi', text: `Nota #${txData.tx_code} - ${fmt(txData.total)}` }); } catch(e) {}
-              }} className="py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold text-xs shadow-md transition-all col-span-2 flex items-center justify-center gap-1.5">
+              }} className="py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold text-xs shadow-md transition-all col-span-3 flex items-center justify-center gap-1.5">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
                 Bagikan Nota
               </button>
-              <button onClick={() => setModal(null)} className="py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all col-span-2 mt-1">Selesai</button>
+              <button onClick={() => setModal(null)} className="py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all col-span-3 mt-1">Selesai</button>
             </div>
           </Modal>}
 
           {showSessionTxs && <Modal onClose={() => setShowSessionTxs(false)} title="Manajemen Transaksi & PO" full>
-            <TransaksiPanel user={user} db={db} color={color} settings={settings} customers={customers} fmt={fmt} setTxData={setTxData} setModal={setShowSessionTxs} onResume={(t) => {
+            <TransaksiPanel user={user} db={db} color={color} settings={settings} customers={customers} fmt={fmt} setTxData={setTxData} setModal={(val) => { setShowSessionTxs(false); setModal(val); }} onResume={(t) => {
               if (t._type === 'online') {
                 setActiveOnlineOrder(t.id);
                 setActiveHoldTx(null);
