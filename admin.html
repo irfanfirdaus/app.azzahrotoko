@@ -185,51 +185,126 @@
     }
 
     // ── KONTEN ────────────────────────────────────────────────────
-    function KatalogPage({ settings, notify, onReload, color }) {
-      const [tab, setTab] = useState("banner");
+    function KatalogPage({ products, settings, notify, onReload, color }) {
+      const [tab, setTab] = useState("element");
       const [saving, setSaving] = useState(false);
 
-      // ── BANNER ──
+      // ── ELEMENT (Banner, Etalase, Produk) ──
       const parseBanners = () => { try { return JSON.parse(settings.banners || "[]"); } catch(_) { return []; } };
+      const defaultLayout = { 
+        show_banner: settings.catalog_banner_active !== 'false', 
+        show_etalase: settings.catalog_etalase_active !== 'false', 
+        show_category: settings.catalog_show_category !== 'false', 
+        default_view: settings.catalog_default_view || "grid", 
+        hidden_etalases: (() => { try { return JSON.parse(settings.catalog_hidden_etalases || "[]"); } catch(_) { return []; } })()
+      };
+      const parseHiddenProds = () => { try { return JSON.parse(settings.catalog_hidden_products || "[]"); } catch(_) { return []; } };
+
       const [banners, setBanners] = useState(parseBanners);
-      const emptyBanner = { title: "", subtitle: "", image: "", link: "" };
+      const emptyBanner = { title: "", subtitle: "", image: "", link: "", bg_type: "color", bg_val: "#114232" };
       const [bForm, setBForm] = useState(emptyBanner);
       const [editIdx, setEditIdx] = useState(null);
+      const [layout, setLayout] = useState(defaultLayout);
+      const [hiddenProducts, setHiddenProducts] = useState(parseHiddenProds);
+      const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+      const [showBannerForm, setShowBannerForm] = useState(false);
+      const [mediaPickerTarget, setMediaPickerTarget] = useState(null);
 
-      useEffect(() => { setBanners(parseBanners()); }, [settings.banners]);
+      // Generate etalases options from products
+      const etalasesSet = new Set();
+      (products || []).forEach(p => p.etalase && etalasesSet.add(p.etalase));
+      const allEtalases = Array.from(etalasesSet);
 
-      const saveBanners = async (list) => {
+      useEffect(() => {
+        setBanners(parseBanners());
+        setLayout({
+          show_banner: settings.catalog_banner_active !== 'false', 
+          show_etalase: settings.catalog_etalase_active !== 'false', 
+          show_category: settings.catalog_show_category !== 'false', 
+          default_view: settings.catalog_default_view || "grid",
+          hidden_etalases: (() => { try { return JSON.parse(settings.catalog_hidden_etalases || "[]"); } catch(_) { return []; } })()
+        });
+        setHiddenProducts(parseHiddenProds());
+      }, [settings]);
+
+      const saveElement = async () => {
         setSaving(true);
-        await db.from("settings").upsert({ key: "banners", value: JSON.stringify(list) }, { onConflict: "key" });
-        setSaving(false); notify("Banner disimpan!"); onReload();
+        const pairs = [
+          { key: "banners", value: JSON.stringify(banners) },
+          { key: "catalog_banner_active", value: String(layout.show_banner) },
+          { key: "catalog_etalase_active", value: String(layout.show_etalase) },
+          { key: "catalog_hidden_etalases", value: JSON.stringify(layout.hidden_etalases) },
+          { key: "catalog_show_category", value: String(layout.show_category) },
+          { key: "catalog_default_view", value: layout.default_view },
+          { key: "catalog_hidden_products", value: JSON.stringify(hiddenProducts) }
+        ];
+        for (const item of pairs) await db.from("settings").upsert(item, { onConflict: "key" });
+        setSaving(false); notify("Pengaturan Element disimpan!"); onReload();
       };
+
       const addBanner = () => {
-        if (!bForm.title && !bForm.image) return notify("Isi judul atau gambar!");
+        if (!bForm.title && !bForm.image) return notify("Isi judul atau gambar banner!");
         const list = editIdx !== null ? banners.map((b, i) => i === editIdx ? { ...bForm } : b) : [...banners, { ...bForm }];
-        setBanners(list); saveBanners(list); setBForm(emptyBanner); setEditIdx(null);
+        setBanners(list); setBForm(emptyBanner); setEditIdx(null);
       };
-      const delBanner = (i) => { const list = banners.filter((_n, j) => j !== i); setBanners(list); saveBanners(list); };
+      const delBanner = (i) => setBanners(banners.filter((_, j) => j !== i));
       const editBanner = (i) => { setBForm({ ...banners[i] }); setEditIdx(i); };
+
+      const toggleEtalase = (e) => {
+        setLayout(prev => {
+          const h = prev.hidden_etalases.includes(e) ? prev.hidden_etalases.filter(x => x !== e) : [...prev.hidden_etalases, e];
+          return { ...prev, hidden_etalases: h };
+        });
+      };
+
+      const toggleHiddenProduct = (pid) => {
+        setHiddenProducts(prev => prev.includes(pid) ? prev.filter(x => x !== pid) : [...prev, pid]);
+      };
 
       // ── TENTANG KAMI ──
       const parseServices = () => { try { return JSON.parse(settings.about_services || "[]"); } catch(_) { return [{ icon: "🕌", title: "", desc: "" }]; } };
       const parseLinks = () => { try { return JSON.parse(settings.about_extra_links || "[]"); } catch(_) { return []; } };
-      const defaultLayout = { show_banner: true, show_category: true, show_etalase: true, default_view: "grid", hidden_etalases: [] };
-      const parseLayout = () => { try { return { ...defaultLayout, ...JSON.parse(settings.catalog_layout || "{}") }; } catch(_) { return defaultLayout; } };
       
       const [about, setAbout] = useState({
         about_hero_image: settings.about_hero_image || "",
         about_description: settings.about_description || "",
+        about_description_image: settings.about_description_image || "",
         about_cta_label: settings.about_cta_label || "Hubungi Kami via WhatsApp",
+        wa_number: settings.wa_number || "6281234567890",
+        store_address: settings.store_address || "",
+        store_gmap_url: settings.store_gmap_url || "",
       });
       const [services, setServices] = useState(parseServices);
       const [extraLinks, setExtraLinks] = useState(parseLinks);
-      const [layout, setLayout] = useState(parseLayout);
+
+      useEffect(() => {
+        setAbout({
+          about_hero_image: settings.about_hero_image || "",
+          about_description: settings.about_description || "",
+          about_description_image: settings.about_description_image || "",
+          about_cta_label: settings.about_cta_label || "Hubungi Kami via WhatsApp",
+          wa_number: settings.wa_number || "6281234567890",
+          store_address: settings.store_address || "",
+          store_gmap_url: settings.store_gmap_url || "",
+        });
+        setServices(parseServices()); setExtraLinks(parseLinks());
+      }, [settings]);
+
+      const saveAbout = async () => {
+        setSaving(true);
+        const pairs = [
+          ...Object.entries(about),
+          ["about_services", JSON.stringify(services)],
+          ["about_extra_links", JSON.stringify(extraLinks)],
+        ];
+        for (const [key, value] of pairs) await db.from("settings").upsert({ key, value }, { onConflict: "key" });
+        setSaving(false); notify("Tentang Kami disimpan!"); onReload();
+      };
 
       // ── MAINTENANCE ──
       const [maintenance, setMaintenance] = useState({
         maintenance_mode: settings.maintenance_mode === 'true',
-        maintenance_text: settings.maintenance_text || "Maaf, katalog kami sedang dalam pemeliharaan untuk meningkatkan layanan. Silakan kembali lagi nanti.",
+        maintenance_text: settings.maintenance_text || "Maaf, katalog kami sedang dalam pemeliharaan.",
         maintenance_image: settings.maintenance_image || "",
         maintenance_btn_text: settings.maintenance_btn_text || "Hubungi via WhatsApp",
         maintenance_btn_link: settings.maintenance_btn_link || "",
@@ -237,13 +312,19 @@
         maintenance_bg_val: settings.maintenance_bg_val || "#114232",
       });
 
+      const handleMediaSelect = (url) => {
+        if (mediaPickerTarget === 'banner_image') setBForm(p => ({ ...p, image: url }));
+        if (mediaPickerTarget === 'banner_bg') setBForm(p => ({ ...p, bg_val: url }));
+        if (mediaPickerTarget === 'about_hero') setAbout(p => ({ ...p, about_hero_image: url }));
+        if (mediaPickerTarget === 'about_desc') setAbout(p => ({ ...p, about_description_image: url }));
+        if (mediaPickerTarget === 'maintenance_image') setMaintenance(p => ({ ...p, maintenance_image: url }));
+        if (mediaPickerTarget === 'maintenance_bg') setMaintenance(p => ({ ...p, maintenance_bg_val: url }));
+      };
+
       useEffect(() => {
-        setAbout({ about_hero_image: settings.about_hero_image || "", about_description: settings.about_description || "", about_cta_label: settings.about_cta_label || "Hubungi Kami via WhatsApp" });
-        setServices(parseServices()); setExtraLinks(parseLinks());
-        setLayout(parseLayout());
         setMaintenance({
           maintenance_mode: settings.maintenance_mode === 'true',
-          maintenance_text: settings.maintenance_text || "Maaf, katalog kami sedang dalam pemeliharaan untuk meningkatkan layanan. Silakan kembali lagi nanti.",
+          maintenance_text: settings.maintenance_text || "Maaf, katalog kami sedang dalam pemeliharaan.",
           maintenance_image: settings.maintenance_image || "",
           maintenance_btn_text: settings.maintenance_btn_text || "Hubungi via WhatsApp",
           maintenance_btn_link: settings.maintenance_btn_link || "",
@@ -255,23 +336,8 @@
       const saveMaintenance = async () => {
         setSaving(true);
         const pairs = Object.entries(maintenance).map(([k, v]) => ({ key: k, value: String(v) }));
-        for (const { key, value } of pairs) {
-          await db.from("settings").upsert({ key, value }, { onConflict: "key" });
-        }
+        for (const { key, value } of pairs) await db.from("settings").upsert({ key, value }, { onConflict: "key" });
         setSaving(false); notify("Pengaturan Maintenance disimpan!"); onReload();
-      };
-
-      const saveAbout = async () => {
-        setSaving(true);
-        const pairs = [
-          ...Object.entries(about),
-          ["about_services", JSON.stringify(services)],
-          ["about_extra_links", JSON.stringify(extraLinks)],
-        ];
-        for (const [key, value] of pairs) {
-          await db.from("settings").upsert({ key, value }, { onConflict: "key" });
-        }
-        setSaving(false); notify("Tentang Kami disimpan!"); onReload();
       };
 
       const tabCls = (t) => `px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${tab === t ? 'bg-dark text-white shadow' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'}`;
@@ -280,220 +346,298 @@
         <div className="p-4">
           <div className="flex justify-between items-center mb-5">
             <h2 className="font-extrabold text-lg text-gray-800">Manajemen Katalog</h2>
-            <a href="tentangkami.html" target="_blank" className="text-xs font-bold text-brand hover:underline flex items-center gap-1">
-              Lihat Halaman
+            <a href="index.html" target="_blank" className="text-xs font-bold text-brand hover:underline flex items-center gap-1">
+              Lihat Katalog
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 5l7 7-7 7M3 12h18"/></svg>
             </a>
           </div>
-          <div className="flex gap-2 mb-6">
-            <button onClick={() => setTab("banner")} className={tabCls("banner")}>🖼 Banner</button>
+          <div className="flex gap-2 mb-6 overflow-x-auto hide-scrollbar">
+            <button onClick={() => setTab("element")} className={tabCls("element")}>🧩 Element</button>
             <button onClick={() => setTab("tentang")} className={tabCls("tentang")}>🏪 Tentang Kami</button>
-            <button onClick={() => setTab("layout")} className={tabCls("layout")}>⚙️ Layout</button>
             <button onClick={() => setTab("maintenance")} className={tabCls("maintenance")}>🔧 Maintenance</button>
           </div>
 
-          {tab === "banner" && (
-            <div className="space-y-4 animate-fade-up">
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
-                <div className="font-bold text-sm text-gray-700 mb-2">{editIdx !== null ? "Edit Banner" : "Tambah Banner Baru"}</div>
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Judul</label><input value={bForm.title} onChange={e => setBForm(p => ({ ...p, title: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Promo Spesial Ramadan..." /></div>
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Subjudul</label><input value={bForm.subtitle} onChange={e => setBForm(p => ({ ...p, subtitle: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Diskon hingga 20%..." /></div>
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar (opsional)</label><input value={bForm.image} onChange={e => setBForm(p => ({ ...p, image: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link (opsional)</label><input value={bForm.link} onChange={e => setBForm(p => ({ ...p, link: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="index.html?sku=... atau https://..." /></div>
-                <div className="flex gap-2 pt-1">
-                  {editIdx !== null && <button onClick={() => { setBForm(emptyBanner); setEditIdx(null); }} className="px-4 py-2 bg-gray-100 rounded-xl text-sm font-bold text-gray-600">Batal</button>}
-                  <button onClick={addBanner} disabled={saving} className="flex-1 py-2.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm transition-all disabled:opacity-50">{saving ? "Menyimpan..." : editIdx !== null ? "Update Banner" : "Tambah Banner"}</button>
+          {tab === "element" && (
+            <div className="space-y-6 animate-fade-up">
+              
+              {/* SECTION BANNER */}
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                  <div className="font-bold text-gray-800">Section Banner</div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={layout.show_banner} onChange={e => setLayout({...layout, show_banner: e.target.checked})} className="sr-only peer" />
+                    <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand"></div>
+                  </label>
+                </div>
+                {layout.show_banner && (
+                  <div className="p-4 space-y-4">
+                    {banners.length > 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                        {banners.map((b, i) => (
+                          <div key={i} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl shadow-sm relative overflow-hidden">
+                            {b.bg_type === 'image' ? (
+                              <div className="absolute inset-0 z-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${b.bg_val})`}}></div>
+                            ) : (
+                              <div className="absolute inset-0 z-0 opacity-10" style={{ backgroundColor: b.bg_val }}></div>
+                            )}
+                            <img src={b.image} className="w-12 h-12 object-cover rounded-lg bg-gray-100 z-10 shrink-0" onError={e=>e.target.style.display='none'}/>
+                            <div className="flex-1 min-w-0 z-10">
+                              <div className="font-bold text-sm text-gray-800 truncate">{b.title || 'Tanpa Judul'}</div>
+                              <div className="text-xs text-gray-500 truncate">{b.subtitle}</div>
+                            </div>
+                            <div className="flex flex-col gap-1 z-10 shrink-0">
+                              <button onClick={() => { editBanner(i); setShowBannerForm(true); }} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                              <button onClick={() => delBanner(i)} className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {!(showBannerForm || editIdx !== null) ? (
+                      <button onClick={() => setShowBannerForm(true)} className="w-full py-3 bg-gray-50 hover:bg-gray-100 text-gray-600 border-2 border-dashed border-gray-200 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg> Tambah Banner
+                      </button>
+                    ) : (
+                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
+                        <div className="font-bold text-sm text-gray-700 mb-2">{editIdx !== null ? "Edit Banner" : "Tambah Banner Baru"}</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Judul</label><input value={bForm.title} onChange={e => setBForm(p => ({ ...p, title: e.target.value }))} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Promo Spesial..." /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Subjudul</label><input value={bForm.subtitle} onChange={e => setBForm(p => ({ ...p, subtitle: e.target.value }))} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Diskon hingga 20%..." /></div>
+                          <div className="md:col-span-2">
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Gambar Produk/Ilustrasi</label>
+                            <div className="flex gap-2">
+                              <input value={bForm.image} readOnly className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Belum ada gambar" />
+                              <button onClick={() => { setMediaPickerTarget('banner_image'); setMediaPickerOpen(true); }} className="bg-brand text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipe Background</label>
+                            <select value={bForm.bg_type || 'color'} onChange={e => setBForm(p => ({ ...p, bg_type: e.target.value, bg_val: e.target.value==='color' ? '#114232' : '' }))} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none">
+                              <option value="color">Warna Hex</option>
+                              <option value="image">Gambar Background (URL)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nilai Background</label>
+                            {bForm.bg_type === 'image' ? (
+                              <div className="flex gap-2">
+                                <input value={bForm.bg_val} readOnly className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Belum ada gambar" />
+                                <button onClick={() => { setMediaPickerTarget('banner_bg'); setMediaPickerOpen(true); }} className="bg-brand text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <input type="color" value={bForm.bg_val} onChange={e => setBForm(p => ({ ...p, bg_val: e.target.value }))} className="w-10 h-9 rounded-lg border border-gray-200 cursor-pointer" />
+                                <input value={bForm.bg_val} onChange={e => setBForm(p => ({ ...p, bg_val: e.target.value }))} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="#114232" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="md:col-span-2"><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link Tautan (URL - Opsional)</label><input value={bForm.link} onChange={e => setBForm(p => ({ ...p, link: e.target.value }))} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
+                        </div>
+                        <div className="flex gap-2 justify-end mt-2">
+                          <button onClick={() => { setEditIdx(null); setBForm(emptyBanner); setShowBannerForm(false); }} className="px-4 py-2 bg-gray-200 text-gray-700 text-xs font-bold rounded-xl">Batal</button>
+                          <button onClick={() => { addBanner(); setShowBannerForm(false); }} className="px-4 py-2 bg-brand text-white text-xs font-bold rounded-xl hover:bg-dark transition-all">{editIdx !== null ? "Simpan Perubahan" : "+ Tambah Banner"}</button>
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION ETALASE */}
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                  <div className="font-bold text-gray-800">Section Etalase</div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={layout.show_etalase} onChange={e => setLayout({...layout, show_etalase: e.target.checked})} className="sr-only peer" />
+                    <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand"></div>
+                  </label>
+                </div>
+                {layout.show_etalase && (
+                  <div className="p-4">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2">Pilih Etalase yang Ditampilkan</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {allEtalases.map(e => (
+                        <label key={e} className={`flex items-center gap-2 p-3 border rounded-xl cursor-pointer transition-all ${!layout.hidden_etalases.includes(e) ? 'border-brand/50 bg-brand/5' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <input type="checkbox" checked={!layout.hidden_etalases.includes(e)} onChange={() => toggleEtalase(e)} className="w-4 h-4 text-brand rounded border-gray-300 focus:ring-brand" />
+                          <span className="text-sm font-bold text-gray-700">{e}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION PRODUK */}
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 bg-gray-50/50">
+                  <div className="font-bold text-gray-800">Section Produk</div>
+                </div>
+                <div className="p-4 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-sm text-gray-700">Filter Kategori</div>
+                      <div className="text-[10px] text-gray-400">Tampilkan deretan kategori di atas list produk</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={layout.show_category} onChange={e => setLayout({...layout, show_category: e.target.checked})} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand"></div>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tampilan Default List Produk</label>
+                    <select value={layout.default_view} onChange={e => setLayout({...layout, default_view: e.target.value})} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                      <option value="grid">Grid (Kotak / Thumbnail)</option>
+                      <option value="list">List (Baris memanjang)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="font-bold text-sm text-gray-700 mb-1">Sembunyikan Produk</div>
+                    <div className="text-[10px] text-gray-400 mb-3">Pilih produk yang tidak ingin ditampilkan di katalog online (tetap bisa dibeli di Kasir).</div>
+                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100 bg-gray-50/30">
+                      {products?.map(p => (
+                        <label key={p.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
+                          <input type="checkbox" checked={hiddenProducts.includes(p.id)} onChange={() => toggleHiddenProduct(p.id)} className="w-4 h-4 text-brand rounded border-gray-300 focus:ring-brand" />
+                          <div className="flex-1">
+                            <div className="text-sm font-bold text-gray-800">{p.name}</div>
+                            {p.sku && <div className="text-[10px] text-gray-500 font-mono">{p.sku}</div>}
+                          </div>
+                          {hiddenProducts.includes(p.id) && <span className="text-[9px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Disembunyikan</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {banners.length === 0 && <div className="text-center text-gray-400 py-8 text-sm bg-white rounded-2xl border border-gray-100">Belum ada banner</div>}
-              <div className="flex flex-col gap-3">
-                {banners.map((b, i) => (
-                  <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 flex gap-3 items-center">
-                    {b.image ? <img src={b.image} className="w-16 h-12 rounded-xl object-cover shrink-0 bg-gray-100" onError={e => e.target.style.display='none'} /> : <div className="w-16 h-12 rounded-xl shrink-0 flex items-center justify-center text-2xl" style={{ background: `${color}20` }}>🖼</div>}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-sm text-gray-800 truncate">{b.title || "(tanpa judul)"}</div>
-                      {b.subtitle && <div className="text-xs text-gray-500 truncate">{b.subtitle}</div>}
-                      {b.link && <div className="text-[10px] text-brand font-mono truncate">{b.link}</div>}
-                    </div>
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={() => editBanner(i)} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
-                      <button onClick={() => delBanner(i)} className="p-2 bg-red-50 hover:bg-red-100 rounded-lg text-red-500 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {tab === "tentang" && (
-            <div className="space-y-4 animate-fade-up">
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-4">
-                <div className="font-bold text-sm text-gray-700">Konten Halaman "Tentang Kami"</div>
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Hero</label><input value={about.about_hero_image} onChange={e => setAbout(p => ({ ...p, about_hero_image: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
-                {about.about_hero_image && <img src={about.about_hero_image} className="w-full h-32 object-cover rounded-xl border border-gray-100" onError={e => e.target.style.display='none'} />}
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Deskripsi Toko</label><textarea value={about.about_description} onChange={e => setAbout(p => ({ ...p, about_description: e.target.value }))} rows={5} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" placeholder="Cerita tentang toko Anda..." /></div>
-                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Label Tombol WA</label><input value={about.about_cta_label} onChange={e => setAbout(p => ({ ...p, about_cta_label: e.target.value }))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Hubungi Kami via WhatsApp" /></div>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <div className="font-bold text-sm text-gray-700">Layanan Unggulan</div>
-                  <button onClick={() => setServices(sv => [...sv, { icon: "⭐", title: "", desc: "" }])} className="text-xs font-bold px-3 py-1.5 rounded-full border border-brand text-brand hover:bg-brandLight transition-colors">+ Tambah</button>
-                </div>
-                {services.map((sv, i) => (
-                  <div key={i} className="flex gap-2 items-start bg-gray-50 p-3 rounded-xl border border-gray-100">
-                    <input value={sv.icon} onChange={e => setServices(s => s.map((x, j) => j === i ? { ...x, icon: e.target.value } : x))} className="w-10 text-center px-1 py-2 bg-white border border-gray-200 rounded-lg text-lg focus:outline-none" />
-                    <div className="flex-1 space-y-1.5">
-                      <input value={sv.title} onChange={e => setServices(s => s.map((x, j) => j === i ? { ...x, title: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none" placeholder="Judul layanan" />
-                      <input value={sv.desc} onChange={e => setServices(s => s.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none" placeholder="Deskripsi singkat" />
-                    </div>
-                    <button onClick={() => setServices(s => s.filter((_n, j) => j !== i))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <div className="font-bold text-sm text-gray-700">Link Tambahan</div>
-                  <button onClick={() => setExtraLinks(l => [...l, { label: "", url: "" }])} className="text-xs font-bold px-3 py-1.5 rounded-full border border-brand text-brand hover:bg-brandLight transition-colors">+ Tambah</button>
-                </div>
-                {extraLinks.map((lk, i) => (
-                  <div key={i} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-100">
-                    <div className="flex-1 space-y-1.5">
-                      <input value={lk.label} onChange={e => setExtraLinks(l => l.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none" placeholder="Label tombol" />
-                      <input value={lk.url} onChange={e => setExtraLinks(l => l.map((x, j) => j === i ? { ...x, url: e.target.value } : x))} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none" placeholder="URL / link" />
-                    </div>
-                    <button onClick={() => setExtraLinks(l => l.filter((_n, j) => j !== i))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
-                  </div>
-                ))}
-              </div>
-
-              <button onClick={saveAbout} disabled={saving} className="w-full py-3.5 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all disabled:opacity-50">
-                {saving ? "Menyimpan..." : "Simpan Semua Perubahan"}
+              <button onClick={saveElement} disabled={saving} className="w-full py-4 bg-brand text-white font-bold rounded-2xl shadow-lg hover:bg-dark transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {saving ? "Menyimpan..." : <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan Element Katalog</>}
               </button>
             </div>
           )}
 
-          {tab === "layout" && (
-            <div className="space-y-4 animate-fade-up pb-8">
-              <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-                <h3 className="font-bold text-gray-800 mb-2 border-b pb-2">Pengaturan Tampilan Katalog</h3>
-                
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+          {tab === "tentang" && (
+            <div className="space-y-5 animate-fade-up">
+              
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 bg-gray-50/50 font-bold text-gray-800">1. Hero & Deskripsi Toko</div>
+                <div className="p-4 space-y-4">
                   <div>
-                    <div className="font-bold text-gray-800 text-sm">Tampilkan Banner</div>
-                    <div className="text-xs text-gray-500">Tampilkan slider gambar promosi di bagian atas.</div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Gambar Hero (Atas)</label>
+                    <div className="flex gap-2">
+                      <input value={about.about_hero_image} readOnly className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Belum ada gambar" />
+                      <button onClick={() => { setMediaPickerTarget('about_hero'); setMediaPickerOpen(true); }} className="bg-brand text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
+                    </div>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" checked={layout.show_banner} onChange={e => setLayout(l => ({...l, show_banner: e.target.checked}))} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
-                  </label>
-                </div>
-
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Deskripsi Toko</label><textarea value={about.about_description} onChange={e => setAbout({...about, about_description: e.target.value})} className="w-full h-32 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Ceritakan tentang toko Anda..." /></div>
                   <div>
-                    <div className="font-bold text-gray-800 text-sm">Tampilkan Etalase Produk</div>
-                    <div className="text-xs text-gray-500">Tampilkan grup produk berdasarkan etalase secara mendatar.</div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" checked={layout.show_etalase} onChange={e => setLayout(l => ({...l, show_etalase: e.target.checked}))} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
-                  </label>
-                </div>
-
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                  <div>
-                    <div className="font-bold text-gray-800 text-sm">Tampilkan Filter Kategori</div>
-                    <div className="text-xs text-gray-500">Tampilkan tombol-tombol filter jenis produk.</div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" checked={layout.show_category} onChange={e => setLayout(l => ({...l, show_category: e.target.checked}))} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
-                  </label>
-                </div>
-
-                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="font-bold text-gray-800 text-sm mb-2">Tampilan Default Produk</div>
-                  <select value={layout.default_view} onChange={e => setLayout(l => ({...l, default_view: e.target.value}))} className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-brand">
-                    <option value="grid">Grid (Kotak)</option>
-                    <option value="list">List (Memanjang)</option>
-                  </select>
-                </div>
-
-                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="font-bold text-gray-800 text-sm mb-2">Pilih Etalase yang Ditampilkan</div>
-                  <div className="flex flex-wrap gap-2">
-                    {(settings.product_etalase || "").split(",").map(s => s.trim()).filter(Boolean).map(et => {
-                      const isHidden = (layout.hidden_etalases || []).includes(et);
-                      return (
-                        <button key={et} onClick={() => setLayout(l => {
-                          const hidden = l.hidden_etalases || [];
-                          return { ...l, hidden_etalases: isHidden ? hidden.filter(h => h !== et) : [...hidden, et] };
-                        })} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${!isHidden ? 'bg-brand text-white border-brand' : 'bg-white text-gray-500 border-gray-200'}`}>
-                          {et}
-                        </button>
-                      );
-                    })}
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Gambar Pelengkap Deskripsi (Opsional)</label>
+                    <div className="flex gap-2">
+                      <input value={about.about_description_image} readOnly className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Belum ada gambar" />
+                      <button onClick={() => { setMediaPickerTarget('about_desc'); setMediaPickerOpen(true); }} className="bg-brand text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
+                    </div>
                   </div>
                 </div>
-
               </div>
-              <button onClick={async () => {
-                setSaving(true);
-                await db.from("settings").upsert({ key: "catalog_layout", value: JSON.stringify(layout) }, { onConflict: "key" });
-                setSaving(false); notify("Layout disimpan!"); onReload();
-              }} disabled={saving} className="w-full py-3 bg-brand text-white font-bold rounded-xl shadow-md hover:bg-dark transition-all disabled:opacity-50">
-                {saving ? "Menyimpan..." : "Simpan Pengaturan Layout"}
+
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                  <div className="font-bold text-gray-800">2. Highlight Layanan / Keunggulan</div>
+                  <button onClick={() => setServices([...services, { icon: "⭐️", title: "", desc: "" }])} className="text-xs font-bold text-brand hover:underline">+ Tambah</button>
+                </div>
+                <div className="p-4 space-y-3">
+                  {services.map((s, i) => (
+                    <div key={i} className="flex gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200 relative group">
+                      <div className="w-12"><input value={s.icon} onChange={e => { const ns = [...services]; ns[i].icon = e.target.value; setServices(ns); }} className="w-full text-center text-xl bg-white border border-gray-200 rounded-lg py-2 focus:outline-none" placeholder="Icon" /></div>
+                      <div className="flex-1 space-y-2">
+                        <input value={s.title} onChange={e => { const ns = [...services]; ns[i].title = e.target.value; setServices(ns); }} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-bold focus:outline-none" placeholder="Judul (Misal: Pengiriman Cepat)" />
+                        <textarea value={s.desc} onChange={e => { const ns = [...services]; ns[i].desc = e.target.value; setServices(ns); }} className="w-full px-2 py-1 bg-white border border-gray-200 rounded-lg text-xs h-12 focus:outline-none" placeholder="Deskripsi layanan..." />
+                      </div>
+                      <button onClick={() => setServices(services.filter((_, j) => j !== i))} className="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 bg-white rounded-full p-1 shadow-sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                    </div>
+                  ))}
+                  {services.length === 0 && <div className="text-xs text-center text-gray-400 py-2">Belum ada highlight.</div>}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 bg-gray-50/50 font-bold text-gray-800">3. Kontak & Lokasi</div>
+                <div className="p-4 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Label Tombol WA</label><input value={about.about_cta_label} onChange={e => setAbout({...about, about_cta_label: e.target.value})} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Hubungi Kami..." /></div>
+                    <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nomor WhatsApp Toko</label><input value={about.wa_number} onChange={e => setAbout({...about, wa_number: e.target.value})} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="62812345..." /></div>
+                  </div>
+                  <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Alamat Toko</label><textarea value={about.store_address} onChange={e => setAbout({...about, store_address: e.target.value})} className="w-full h-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Jl. Raya Utama No. 1..." /></div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Titik Google Maps (URL / iFrame Src)</label>
+                    <input value={about.store_gmap_url} onChange={e => setAbout({...about, store_gmap_url: e.target.value})} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://maps.google.com/..." />
+                    <div className="text-[10px] text-gray-400 mt-1">Masukkan URL dari Google Maps Embed (src=...) atau link maps.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                  <div className="font-bold text-gray-800">4. Link Tambahan (Sosmed, Web, dll)</div>
+                  <button onClick={() => setExtraLinks([...extraLinks, { label: "", url: "" }])} className="text-xs font-bold text-brand hover:underline">+ Tambah Link</button>
+                </div>
+                <div className="p-4 space-y-3">
+                  {extraLinks.map((lk, i) => (
+                    <div key={i} className="flex gap-2 relative group items-center">
+                      <input value={lk.label} onChange={e => { const nl = [...extraLinks]; nl[i].label = e.target.value; setExtraLinks(nl); }} className="w-1/3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Label (Misal: Instagram)" />
+                      <input value={lk.url} onChange={e => { const nl = [...extraLinks]; nl[i].url = e.target.value; setExtraLinks(nl); }} className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="https://..." />
+                      <button onClick={() => setExtraLinks(extraLinks.filter((_, j) => j !== i))} className="p-2 text-red-500 hover:bg-red-50 rounded-xl"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                    </div>
+                  ))}
+                  {extraLinks.length === 0 && <div className="text-xs text-center text-gray-400 py-2">Belum ada link tambahan.</div>}
+                </div>
+              </div>
+
+              <button onClick={saveAbout} disabled={saving} className="w-full py-4 bg-brand text-white font-bold rounded-2xl shadow-lg hover:bg-dark transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {saving ? "Menyimpan..." : <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan Tentang Kami</>}
               </button>
             </div>
           )}
 
           {tab === "maintenance" && (
-            <div className="space-y-4 animate-fade-up pb-8">
-              <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-                <h3 className="font-bold text-gray-800 mb-2 border-b pb-2">Pengaturan Under Construction (Maintenance)</h3>
-                
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+            <div className="space-y-4 animate-fade-up">
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 space-y-4">
+                <div className="flex items-center justify-between p-3 bg-red-50 rounded-xl border border-red-100">
                   <div>
-                    <div className="font-bold text-gray-800 text-sm">Aktifkan Maintenance Mode</div>
-                    <div className="text-xs text-gray-500">Katalog akan menampilkan halaman "Under Construction".</div>
+                    <div className="font-bold text-sm text-red-700">Maintenance Mode</div>
+                    <div className="text-[10px] text-red-500/80">Aktifkan untuk menampilkan halaman perbaikan.</div>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={maintenance.maintenance_mode} onChange={e => setMaintenance(m => ({...m, maintenance_mode: e.target.checked}))} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
+                    <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
                   </label>
                 </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Pesan Maintenance</label>
-                    <textarea value={maintenance.maintenance_text} onChange={e => setMaintenance(m => ({...m, maintenance_text: e.target.value}))} rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-none" />
+                <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teks Pesan</label><textarea value={maintenance.maintenance_text} onChange={e => setMaintenance(m => ({...m, maintenance_text: e.target.value}))} className="w-full h-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Maaf, sedang perbaikan..." /></div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Gambar (URL)</label>
+                  <div className="flex gap-2">
+                    <input value={maintenance.maintenance_image} readOnly className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Belum ada gambar" />
+                    <button onClick={() => { setMediaPickerTarget('maintenance_image'); setMediaPickerOpen(true); }} className="bg-brand text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
                   </div>
-                  
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Ilustrasi (opsional)</label>
-                    <input value={maintenance.maintenance_image} onChange={e => setMaintenance(m => ({...m, maintenance_image: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." />
-                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teks Tombol Aksi</label><input value={maintenance.maintenance_btn_text} onChange={e => setMaintenance(m => ({...m, maintenance_btn_text: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Hubungi Admin..." /></div>
+                  <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link Tombol Aksi (Opsional)</label><input value={maintenance.maintenance_btn_link} onChange={e => setMaintenance(m => ({...m, maintenance_btn_link: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
+                </div>
 
+                <div className="border-t border-gray-100 pt-3">
+                  <div className="font-bold text-sm text-gray-700 mb-2">Desain Latar Belakang</div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teks Tombol</label>
-                      <input value={maintenance.maintenance_btn_text} onChange={e => setMaintenance(m => ({...m, maintenance_btn_text: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipe Background</label>
+                      <select value={maintenance.maintenance_bg_type} onChange={e => setMaintenance(m => ({...m, maintenance_bg_type: e.target.value, maintenance_bg_val: e.target.value==='color' ? '#114232' : ''}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none">
+                        <option value="color">Warna Solid</option>
+                        <option value="image">Gambar (Image URL)</option>
+                      </select>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link Tombol (WA / URL)</label>
-                      <input value={maintenance.maintenance_btn_link} onChange={e => setMaintenance(m => ({...m, maintenance_btn_link: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="Biarkan kosong untuk WA default" />
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-gray-100 mt-4">
-                    <div className="font-bold text-gray-800 text-sm mb-3">Pengaturan Background</div>
-                    <div className="flex gap-2 mb-3">
-                      <button onClick={() => setMaintenance(m => ({...m, maintenance_bg_type: 'color'}))} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${maintenance.maintenance_bg_type === 'color' ? 'bg-dark text-white' : 'bg-gray-100 text-gray-500'}`}>Warna Solid</button>
-                      <button onClick={() => setMaintenance(m => ({...m, maintenance_bg_type: 'image'}))} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${maintenance.maintenance_bg_type === 'image' ? 'bg-dark text-white' : 'bg-gray-100 text-gray-500'}`}>Gambar Background</button>
-                    </div>
-                    
                     {maintenance.maintenance_bg_type === 'color' ? (
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Warna Background (Hex)</label>
@@ -505,7 +649,10 @@
                     ) : (
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Background</label>
-                        <input value={maintenance.maintenance_bg_val} onChange={e => setMaintenance(m => ({...m, maintenance_bg_val: e.target.value}))} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." />
+                        <div className="flex gap-2">
+                          <input value={maintenance.maintenance_bg_val} readOnly className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="Belum ada gambar" />
+                          <button onClick={() => { setMediaPickerTarget('maintenance_bg'); setMediaPickerOpen(true); }} className="bg-brand text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -518,7 +665,268 @@
             </div>
           )}
 
+          {mediaPickerOpen && <MediaPickerModal onClose={() => setMediaPickerOpen(false)} onSelect={handleMediaSelect} settings={settings} notify={notify} />}
         </div>
+      );
+    }
+
+    // ── MEDIAPANEL ────────────────────────────────────────────────
+    function MediaPanel({ notify, settings }) {
+      const [media, setMedia] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [uploading, setUploading] = useState(false);
+
+      const cloudName = settings.cloudinary_cloud_name;
+      const apiKey = settings.cloudinary_api_key;
+      const apiSecret = settings.cloudinary_api_secret;
+
+      const loadMedia = async () => {
+        setLoading(true);
+        const { data } = await db.from("media").select("*").order("created_at", { ascending: false });
+        setMedia(data || []);
+        setLoading(false);
+      };
+
+      useEffect(() => { loadMedia(); }, []);
+
+      const onUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (!cloudName || !apiKey || !apiSecret) return notify("Pengaturan Cloudinary belum lengkap di menu Setting!");
+
+        setUploading(true);
+        try {
+          let fileToUpload = file;
+          if (file.type.startsWith('image/')) {
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            await new Promise(res => img.onload = res);
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 800;
+            const MAX_HEIGHT = 800;
+            let width = img.width;
+            let height = img.height;
+            if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
+            else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+            canvas.width = width; canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            fileToUpload = canvas.toDataURL('image/jpeg', 0.7);
+          }
+
+          const timestamp = Math.floor(Date.now() / 1000).toString();
+          const str = `timestamp=${timestamp}${apiSecret}`;
+          const encoder = new TextEncoder();
+          const dataToHash = encoder.encode(str);
+          const hashBuffer = await crypto.subtle.digest('SHA-1', dataToHash);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+          const formData = new FormData();
+          formData.append('file', fileToUpload);
+          formData.append('api_key', apiKey);
+          formData.append('timestamp', timestamp);
+          formData.append('signature', signature);
+
+          const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+            method: 'POST',
+            body: formData
+          });
+          const data = await res.json();
+
+          if (data.secure_url) {
+            await db.from("media").insert({
+              url: data.secure_url,
+              public_id: data.public_id,
+              type: 'image'
+            });
+            notify("Gambar berhasil di-upload!");
+            loadMedia();
+          } else {
+            notify("Gagal upload ke Cloudinary.");
+          }
+        } catch (err) {
+          notify("Error: " + err.message);
+        }
+        setUploading(false);
+      };
+
+      const onDelete = async (item) => {
+        if (!confirm("Hapus gambar ini dari galeri?")) return;
+        
+        const { error } = await db.from("media").delete().eq("id", item.id);
+        if (error) return notify("Gagal hapus dari database: " + error.message);
+
+        if (item.public_id && cloudName && apiKey && apiSecret) {
+          try {
+            const timestamp = Math.floor(Date.now() / 1000).toString();
+            const str = `public_id=${item.public_id}&timestamp=${timestamp}${apiSecret}`;
+            const encoder = new TextEncoder();
+            const dataToHash = encoder.encode(str);
+            const hashBuffer = await crypto.subtle.digest('SHA-1', dataToHash);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+            const formData = new FormData();
+            formData.append('public_id', item.public_id);
+            formData.append('api_key', apiKey);
+            formData.append('timestamp', timestamp);
+            formData.append('signature', signature);
+
+            await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
+              method: 'POST',
+              body: formData
+            });
+          } catch (err) {
+            console.error("Cloudinary delete failed", err);
+          }
+        }
+
+        notify("Gambar dihapus!");
+        loadMedia();
+      };
+
+      return (
+        <div className="p-4">
+          <div className="flex justify-between items-center mb-5">
+            <h2 className="font-extrabold text-lg text-gray-800">Media Library</h2>
+            <label className="bg-brand text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer hover:bg-dark transition-all">
+              {uploading ? "Uploading..." : "+ Upload Baru"}
+              <input type="file" className="hidden" onChange={onUpload} accept="image/*" disabled={uploading} />
+            </label>
+          </div>
+
+          {loading ? <Spinner /> : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {media.map(m => (
+                <div key={m.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden group relative">
+                  <img src={m.url} className="w-full h-40 object-cover" alt="Media" />
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
+                    <button onClick={() => window.open(m.url, '_blank')} className="p-2 bg-white rounded-full text-gray-700 hover:bg-gray-100">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M10 14L21 3M21 13v6a2 2 0 01-2-2H5a2 2 0 01-2-2V5a2 2 0 012-2h6"/></svg>
+                    </button>
+                    <button onClick={() => onDelete(m)} className="p-2 bg-red-500 rounded-full text-white hover:bg-red-600">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {media.length === 0 && (
+                <div className="col-span-2 md:col-span-4 text-center text-gray-400 py-10">Belum ada media. Silakan upload.</div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── MEDIAPICKERMODAL ──────────────────────────────────────────
+    function MediaPickerModal({ onClose, onSelect, settings, notify }) {
+      const [media, setMedia] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [uploading, setUploading] = useState(false);
+
+      const cloudName = settings.cloudinary_cloud_name;
+      const apiKey = settings.cloudinary_api_key;
+      const apiSecret = settings.cloudinary_api_secret;
+
+      const loadMedia = async () => {
+        setLoading(true);
+        const { data } = await db.from("media").select("*").order("created_at", { ascending: false });
+        setMedia(data || []);
+        setLoading(false);
+      };
+
+      useEffect(() => { loadMedia(); }, []);
+
+      const onUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (!cloudName || !apiKey || !apiSecret) return notify("Pengaturan Cloudinary belum lengkap!");
+
+        setUploading(true);
+        try {
+          let fileToUpload = file;
+          if (file.type.startsWith('image/')) {
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            await new Promise(res => img.onload = res);
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 800;
+            const MAX_HEIGHT = 800;
+            let width = img.width;
+            let height = img.height;
+            if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
+            else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+            canvas.width = width; canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            fileToUpload = canvas.toDataURL('image/jpeg', 0.7);
+          }
+
+          const timestamp = Math.floor(Date.now() / 1000).toString();
+          const str = `timestamp=${timestamp}${apiSecret}`;
+          const encoder = new TextEncoder();
+          const dataToHash = encoder.encode(str);
+          const hashBuffer = await crypto.subtle.digest('SHA-1', dataToHash);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+          const formData = new FormData();
+          formData.append('file', fileToUpload);
+          formData.append('api_key', apiKey);
+          formData.append('timestamp', timestamp);
+          formData.append('signature', signature);
+
+          const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+            method: 'POST',
+            body: formData
+          });
+          const data = await res.json();
+
+          if (data.secure_url) {
+            await db.from("media").insert({
+              url: data.secure_url,
+              public_id: data.public_id,
+              type: 'image'
+            });
+            notify("Gambar di-upload!");
+            loadMedia();
+          }
+        } catch (err) {
+          notify("Error: " + err.message);
+        }
+        setUploading(false);
+      };
+
+      return (
+        <Modal onClose={onClose} title="Pilih Media" wide>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <div className="text-xs text-gray-500">Pilih gambar dari pustaka atau upload baru.</div>
+              <label className="bg-brand text-white px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer hover:bg-dark">
+                {uploading ? "Uploading..." : "+ Upload"}
+                <input type="file" className="hidden" onChange={onUpload} accept="image/*" disabled={uploading} />
+              </label>
+            </div>
+
+            {loading ? <Spinner /> : (
+              <div className="grid grid-cols-3 md:grid-cols-5 gap-3 max-h-96 overflow-y-auto p-1">
+                {media.map(m => (
+                  <div key={m.id} onClick={() => { onSelect(m.url); onClose(); }} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden cursor-pointer hover:border-brand/50 transition-all relative group">
+                    <img src={m.url} className="w-full h-24 object-cover" alt="Media" />
+                    <div className="absolute inset-0 bg-brand/10 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
+                      <span className="text-white text-xs font-bold bg-brand px-2 py-1 rounded">Pilih</span>
+                    </div>
+                  </div>
+                ))}
+                {media.length === 0 && (
+                  <div className="col-span-3 md:col-span-5 text-center text-gray-400 py-10">Belum ada media.</div>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
       );
     }
 
@@ -578,10 +986,13 @@
         { id: "dashboard", label: "Home", path: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
         { id: "produk", label: "Produk", path: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" },
         { id: "pelanggan", label: "Pelanggan", path: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" },
+        { id: "po", label: "Monitor PO", path: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+
         { id: "promo", label: "Promo", path: "M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" },
         { id: "laporan", label: "Laporan", path: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
         { id: "sesi", label: "Sesi", path: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
         { id: "konten", label: "Katalog", path: "M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" },
+        { id: "media", label: "Media", path: "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" },
         { id: "pengaturan", label: "Setting", path: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" },
       ];
 
@@ -637,8 +1048,11 @@
               {page === "promo" && <PromoPage promos={promos} products={products} notify={notify} onReload={loadPromos} color={color} />}
               {page === "laporan" && <Laporan transactions={transactions} products={products} customers={customers} notify={notify} loading={loading.t} color={color} />}
               {page === "sesi" && <SesiPage sessions={sessions} onReload={loadSessions} notify={notify} color={color} />}
-              {page === "konten" && <KatalogPage settings={settings} notify={notify} onReload={loadSettings} color={color} />}
+              {page === "konten" && <KatalogPage products={products} settings={settings} notify={notify} onReload={loadSettings} color={color} />}
               {page === "pengaturan" && <Pengaturan cashiers={cashiers} settings={settings} notify={notify} role={role} onReload={() => { loadCashiers(); loadSettings(); }} color={color} />}
+              {page === "po" && <POPanel notify={notify} color={color} />}
+              {page === "media" && <MediaPanel notify={notify} settings={settings} />}
+
             </div>
           </main>
 
@@ -656,7 +1070,97 @@
     }
 
     // ── DASHBOARD ────────────────────────────────────────────────
-    function Dashboard({ products, transactions, customers, cashiers, sessions, settings, color, notify, onRefresh }) {
+    
+    function POPanel({ notify, color }) {
+      const [dataKasir, setDataKasir] = useState([]);
+      const [dataOnline, setDataOnline] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [tab, setTab] = useState('pending'); // pending, delivered
+
+      const loadData = async () => {
+        setLoading(true);
+        try {
+          const db = window.supabase;
+          const [kasirRes, onlineRes] = await Promise.all([
+            db.from('transactions').select('*, transaction_items(*)').eq('po_status', tab).order('created_at', { ascending: false }),
+            db.from('online_orders').select('*').eq('po_status', tab).order('created_at', { ascending: false })
+          ]);
+          setDataKasir(kasirRes.data || []);
+          setDataOnline(onlineRes.data || []);
+        } catch (e) { console.error(e); notify("Gagal memuat PO: " + e.message); }
+        setLoading(false);
+      };
+
+      useEffect(() => { loadData(); }, [tab]);
+
+      const markDelivered = async (type, id) => {
+        if (!confirm("Tandai pesanan PO ini sudah diserahkan?")) return;
+        try {
+          const db = window.supabase;
+          if (type === 'kasir') await db.from('transactions').update({ po_status: 'delivered' }).eq('id', id);
+          else await db.from('online_orders').update({ po_status: 'delivered' }).eq('id', id);
+          notify("Berhasil ditandai.");
+          loadData();
+        } catch(e) { notify("Gagal update PO: " + e.message); }
+      };
+
+      const kData = dataKasir.map(t => ({ ...t, _type: 'kasir' }));
+      const oData = dataOnline.map(t => ({ ...t, _type: 'online' }));
+      const displayList = [...kData, ...oData].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+      return (
+        <div className="p-4 sm:p-6 pb-24 max-w-4xl mx-auto animate-fade-in">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-gray-800">Monitor PO</h1>
+              <p className="text-sm text-gray-500 font-medium">Pantau pesanan Pre-Order yang belum/sudah diserahkan</p>
+            </div>
+            <button onClick={loadData} disabled={loading} className="p-2.5 bg-white border border-gray-200 text-gray-600 hover:text-brand hover:border-brand rounded-xl transition-all shadow-sm group">
+              <svg className={`w-5 h-5 ${loading ? 'animate-spin text-brand' : 'group-hover:rotate-180 transition-transform duration-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </button>
+          </div>
+
+          <div className="flex bg-gray-100 p-1.5 rounded-xl mb-6">
+            <button onClick={() => setTab('pending')} className={`flex-1 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'pending' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>Antrean (Menunggu)</button>
+            <button onClick={() => setTab('delivered')} className={`flex-1 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'delivered' ? 'bg-white text-brand shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>Selesai (Diserahkan)</button>
+          </div>
+
+          <div className="space-y-4">
+            {displayList.length === 0 && !loading && <div className="text-center py-10 bg-white rounded-2xl border border-gray-100"><div className="text-gray-300 mb-3"><svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg></div><div className="text-gray-400 font-medium text-sm">Belum ada pesanan PO di status ini</div></div>}
+            {displayList.map(t => (
+              <div key={t.id} className="bg-white p-4 rounded-2xl border border-purple-100 shadow-sm hover:shadow-md hover:border-purple-300 transition-all">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${t._type === 'online' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                        {t._type === 'online' ? 'Order Online' : 'Kasir'}
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-gray-500">{t.tx_code || t.order_code}</span>
+                    </div>
+                    <div className="font-extrabold text-gray-800 text-base">{t.customer_name || 'Umum'}</div>
+                    <div className="text-xs text-gray-500 font-medium">{new Date(t.created_at).toLocaleString('id-ID')}</div>
+                  </div>
+                  {tab === 'pending' && (
+                    <button onClick={() => markDelivered(t._type, t.id)} className="px-3 py-1.5 bg-purple-100 hover:bg-purple-600 hover:text-white text-purple-700 rounded-lg text-xs font-bold transition-all border border-purple-200 hover:border-purple-600">
+                      Tandai Diserahkan
+                    </button>
+                  )}
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-600 font-medium">
+                  {t._type === 'kasir' ? (
+                    t.transaction_items?.map((i, idx) => <div key={idx} className="flex justify-between py-0.5 border-b border-gray-100 last:border-0"><span className={i.is_po ? 'text-purple-600 font-bold' : ''}>{i.qty}x {i.name}</span></div>)
+                  ) : (
+                    Array.isArray(t.items_json) && t.items_json.map((i, idx) => <div key={idx} className="flex justify-between py-0.5 border-b border-gray-100 last:border-0"><span className={i.is_po ? 'text-purple-600 font-bold' : ''}>{i.qty}x {i.name}</span></div>)
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+function Dashboard({ products, transactions, customers, cashiers, sessions, settings, color, notify, onRefresh }) {
       const today = new Date().toDateString();
       const todayTx = transactions.filter(t => new Date(t.created_at).toDateString() === today);
       const todayRev = todayTx.reduce((s, t) => s + t.total, 0);
@@ -748,6 +1252,465 @@
       );
     }
 
+    // ── VENDOR & MUTASI STOK (SUB-MENU PRODUK) ────────────────────
+    function VendorPanel({ color, notify }) {
+      const [vendors, setVendors] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [modal, setModal] = useState(null);
+      const [form, setForm] = useState({ name: "", phone: "", address: "" });
+      const [saving, setSaving] = useState(false);
+
+      const loadVendors = useCallback(async () => {
+        setLoading(true);
+        const { data } = await db.from("vendors").select("*").order("name");
+        setVendors(data || []);
+        setLoading(false);
+      }, []);
+
+      useEffect(() => { loadVendors(); }, [loadVendors]);
+
+      const save = async () => {
+        if (!form.name) return notify("Nama vendor wajib diisi!");
+        setSaving(true);
+        try {
+          if (modal === "add") {
+            const { error } = await db.from("vendors").insert([{ name: form.name, phone: form.phone, address: form.address }]);
+            if (error) throw error;
+            notify("Vendor ditambahkan!");
+          } else {
+            const { error } = await db.from("vendors").update({ name: form.name, phone: form.phone, address: form.address }).eq("id", modal);
+            if (error) throw error;
+            notify("Vendor diperbarui!");
+          }
+          setModal(null);
+          loadVendors();
+        } catch (e) {
+          notify("Gagal: " + e.message);
+        }
+        setSaving(false);
+      };
+
+      const del = async (id) => {
+        if (!confirm("Hapus vendor ini?")) return;
+        const { error } = await db.from("vendors").delete().eq("id", id);
+        if (error) notify("Gagal: " + error.message);
+        else { notify("Dihapus!"); loadVendors(); }
+      };
+
+      return (
+        <div className="space-y-4 animate-fade-up">
+          <div className="flex gap-2">
+            <button onClick={() => { setForm({ name: "", phone: "", address: "" }); setModal("add"); }} className="px-4 py-2.5 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah Vendor</button>
+          </div>
+          {loading ? <Spinner /> : vendors.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada vendor</div> : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {vendors.map(v => (
+                <div key={v.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col gap-2">
+                  <div className="flex justify-between items-start">
+                    <h3 className="font-bold text-gray-800">{v.name}</h3>
+                    <div className="flex gap-2">
+                      <button onClick={() => { setForm({ name: v.name, phone: v.phone || "", address: v.address || "" }); setModal(v.id); }} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                      <button onClick={() => del(v.id)} className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+                    </div>
+                  </div>
+                  {v.phone && <div className="text-xs text-gray-500 flex items-center gap-1.5"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>{v.phone}</div>}
+                  {v.address && <div className="text-xs text-gray-500 line-clamp-2 mt-1">{v.address}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {modal && (
+            <Modal title={modal === "add" ? "Tambah Vendor" : "Edit Vendor"} onClose={() => setModal(null)}>
+              <div className="p-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Nama Vendor *</label>
+                  <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 transition-all" placeholder="Nama vendor/supplier" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">No. Telepon / WA</label>
+                  <input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 transition-all" placeholder="08..." />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Alamat</label>
+                  <textarea value={form.address} onChange={e => setForm({...form, address: e.target.value})} rows="3" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 transition-all" placeholder="Alamat lengkap..."></textarea>
+                </div>
+                <div className="pt-2">
+                  <button onClick={save} disabled={saving} className="w-full py-3.5 bg-brand text-white font-bold rounded-xl shadow-md hover:opacity-90 active:scale-95 transition-all text-sm">{saving ? "Menyimpan..." : "Simpan"}</button>
+                </div>
+              </div>
+            </Modal>
+          )}
+        </div>
+      );
+    }
+    function MutasiStokPanel({ products, color, notify, onReload }) {
+      const [txs, setTxs] = useState([]);
+      const [vendors, setVendors] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [modal, setModal] = useState(null);
+      const [form, setForm] = useState({ product_sku: "", qty: "", vendor_id: "", payment_status: "lunas", notes: "" });
+      const [saving, setSaving] = useState(false);
+
+      const loadData = useCallback(async () => {
+        setLoading(true);
+        const [resTx, resVen] = await Promise.all([
+          db.from("inventory_transactions").select("*, vendors(name)").in('type', ['in', 'out']).order("transaction_date", { ascending: false }).limit(100),
+          db.from("vendors").select("*").order("name")
+        ]);
+        setTxs(resTx.data || []);
+        setVendors(resVen.data || []);
+        setLoading(false);
+      }, []);
+
+      useEffect(() => { loadData(); }, [loadData]);
+
+      const save = async () => {
+        if (!form.product_sku) return notify("Produk wajib dipilih!");
+        if (!form.qty || parseInt(form.qty) <= 0) return notify("Qty tidak valid!");
+        setSaving(true);
+        try {
+          const payload = { type: modal, product_sku: form.product_sku, qty: parseInt(form.qty), payment_status: form.payment_status, notes: form.notes };
+          if (modal === 'in' && form.vendor_id) payload.vendor_id = form.vendor_id;
+          const { error } = await db.from("inventory_transactions").insert([payload]);
+          if (error) throw error;
+          notify("Berhasil dicatat!");
+          setModal(null);
+          loadData();
+          onReload();
+        } catch (e) { notify("Gagal: " + e.message); }
+        setSaving(false);
+      };
+
+      const productOpts = useMemo(() => products.map(p => ({ sku: p.sku, name: p.variant_name ? `${p.name} - ${p.variant_name}` : p.name })).sort((a,b) => a.name.localeCompare(b.name)), [products]);
+
+      return (
+        <div className="space-y-4 animate-fade-up">
+          <div className="flex gap-2">
+            <button onClick={() => { setForm({ product_sku: "", qty: "", vendor_id: "", payment_status: "lunas", notes: "" }); setModal("in"); }} className="px-4 py-2.5 bg-green-500 text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Barang Masuk</button>
+            <button onClick={() => { setForm({ product_sku: "", qty: "", vendor_id: "", payment_status: "none", notes: "" }); setModal("out"); }} className="px-4 py-2.5 bg-red-500 text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">- Barang Keluar</button>
+          </div>
+          {loading ? <Spinner /> : txs.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada riwayat mutasi</div> : (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[600px]">
+                <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-widest font-bold">
+                  <tr>
+                    <th className="px-4 py-3 border-b">Tanggal</th>
+                    <th className="px-4 py-3 border-b">Tipe</th>
+                    <th className="px-4 py-3 border-b">Produk</th>
+                    <th className="px-4 py-3 border-b">Qty</th>
+                    <th className="px-4 py-3 border-b">Detail</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {txs.map(t => {
+                    const prod = productOpts.find(p => p.sku === t.product_sku);
+                    return (
+                      <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-4 py-3 text-gray-500 text-xs">{new Date(t.transaction_date).toLocaleString('id-ID')}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${t.type === 'in' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                            {t.type === 'in' ? 'MASUK' : 'KELUAR'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-gray-800">
+                          {prod ? prod.name : t.product_sku}
+                          <div className="text-[10px] text-gray-400 font-mono">{t.product_sku}</div>
+                        </td>
+                        <td className="px-4 py-3 font-black text-[15px]" style={{ color: t.type === 'in' ? '#16a34a' : '#dc2626' }}>
+                          {t.type === 'in' ? '+' : '-'}{t.qty}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {t.vendor_id && t.vendors?.name && <div>Vendor: <span className="font-bold text-gray-700">{t.vendors.name}</span></div>}
+                          {t.payment_status && t.payment_status !== 'none' && <div>Status: <span className="font-bold text-gray-700 uppercase">{t.payment_status}</span></div>}
+                          {t.notes && <div className="italic">"{t.notes}"</div>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {modal && (
+            <Modal title={modal === 'in' ? 'Barang Masuk' : 'Barang Keluar'} onClose={() => setModal(null)}>
+              <div className="p-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Produk *</label>
+                  <select value={form.product_sku} onChange={e => setForm({...form, product_sku: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                    <option value="">-- Pilih Produk --</option>
+                    {productOpts.map(p => <option key={p.sku} value={p.sku}>{p.name} ({p.sku})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Jumlah (Qty) *</label>
+                  <input type="number" min="1" value={form.qty} onChange={e => setForm({...form, qty: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="0" />
+                </div>
+                {modal === 'in' && (
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Vendor / Supplier</label>
+                    <select value={form.vendor_id} onChange={e => setForm({...form, vendor_id: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                      <option value="">-- Tanpa Vendor --</option>
+                      {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Status Pembayaran</label>
+                  <select value={form.payment_status} onChange={e => setForm({...form, payment_status: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                    <option value="none">-- Tanpa Status --</option>
+                    <option value="lunas">Lunas</option>
+                    <option value="tempo">Tempo / Belum Lunas</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">{modal === 'in' ? 'Asal / Catatan' : 'Tujuan / Catatan'}</label>
+                  <input value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="cth: Masuk dari pabrik, Keluar untuk cabang..." />
+                </div>
+                <div className="pt-2">
+                  <button onClick={save} disabled={saving} className={`w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 active:scale-95 transition-all text-sm ${modal === 'in' ? 'bg-green-600' : 'bg-red-600'}`}>{saving ? "Menyimpan..." : (modal === 'in' ? "Simpan Barang Masuk" : "Simpan Barang Keluar")}</button>
+                </div>
+              </div>
+            </Modal>
+          )}
+        </div>
+      );
+    }
+    function KonversiPanel({ products, color, notify, onReload }) {
+      const [txs, setTxs] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const [form, setForm] = useState({ out_sku: "", out_qty: "", in_sku: "", in_qty: "", notes: "" });
+
+      const loadData = useCallback(async () => {
+        setLoading(true);
+        const { data } = await db.from("inventory_transactions").select("*").in('type', ['conversion_in', 'conversion_out']).order("transaction_date", { ascending: false }).limit(200);
+        const grouped = {};
+        (data||[]).forEach(d => {
+           if (!d.reference_id) return;
+           if (!grouped[d.reference_id]) grouped[d.reference_id] = { id: d.reference_id, out: null, in: null, date: d.transaction_date, notes: d.notes };
+           if (d.type === 'conversion_out') grouped[d.reference_id].out = d;
+           if (d.type === 'conversion_in') grouped[d.reference_id].in = d;
+        });
+        setTxs(Object.values(grouped).filter(g => g.out && g.in));
+        setLoading(false);
+      }, []);
+
+      useEffect(() => { loadData(); }, [loadData]);
+
+      const save = async () => {
+        if (!form.out_sku || !form.in_sku) return notify("Barang asal & hasil wajib dipilih!");
+        if (!form.out_qty || !form.in_qty) return notify("Qty wajib diisi!");
+        if (form.out_sku === form.in_sku) return notify("Barang asal dan hasil tidak boleh sama!");
+        setSaving(true);
+        try {
+          const refId = crypto.randomUUID();
+          const { error } = await db.from("inventory_transactions").insert([
+            { type: 'conversion_out', product_sku: form.out_sku, qty: parseInt(form.out_qty), reference_id: refId, notes: form.notes },
+            { type: 'conversion_in', product_sku: form.in_sku, qty: parseInt(form.in_qty), reference_id: refId, notes: form.notes }
+          ]);
+          if (error) throw error;
+          notify("Konversi berhasil dicatat!");
+          setForm({ out_sku: "", out_qty: "", in_sku: "", in_qty: "", notes: "" });
+          loadData();
+          onReload();
+        } catch (e) { notify("Gagal: " + e.message); }
+        setSaving(false);
+      };
+      
+      const productOpts = useMemo(() => products.map(p => ({ sku: p.sku, name: p.variant_name ? `${p.name} - ${p.variant_name}` : p.name })).sort((a,b) => a.name.localeCompare(b.name)), [products]);
+
+      return (
+        <div className="space-y-4 animate-fade-up">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-4">
+            <div className="flex flex-col gap-4">
+              <div className="bg-red-50 p-3 rounded-xl border border-red-100">
+                <label className="block text-xs font-bold text-red-600 mb-1.5 uppercase tracking-widest">Pecah Barang (Asal)</label>
+                <div className="flex gap-2">
+                  <select value={form.out_sku} onChange={e => setForm({...form, out_sku: e.target.value})} className="flex-[3] px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none">
+                    <option value="">-- Pilih Barang Besar --</option>
+                    {productOpts.map(p => <option key={p.sku} value={p.sku}>{p.name} ({p.sku})</option>)}
+                  </select>
+                  <input type="number" min="1" value={form.out_qty} onChange={e => setForm({...form, out_qty: e.target.value})} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold focus:outline-none" placeholder="Qty" />
+                </div>
+              </div>
+
+              <div className="bg-green-50 p-3 rounded-xl border border-green-100">
+                <label className="block text-xs font-bold text-green-700 mb-1.5 uppercase tracking-widest">Menjadi Barang (Hasil)</label>
+                <div className="flex gap-2">
+                  <select value={form.in_sku} onChange={e => setForm({...form, in_sku: e.target.value})} className="flex-[3] px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none">
+                    <option value="">-- Pilih Barang Eceran --</option>
+                    {productOpts.map(p => <option key={p.sku} value={p.sku}>{p.name} ({p.sku})</option>)}
+                  </select>
+                  <input type="number" min="1" value={form.in_qty} onChange={e => setForm({...form, in_qty: e.target.value})} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold focus:outline-none" placeholder="Qty" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-3 items-end">
+              <div className="flex-1 w-full">
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Catatan</label>
+                <input value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none" placeholder="Catatan opsional..." />
+              </div>
+              <button onClick={save} disabled={saving} className="w-full md:w-auto px-6 py-2.5 bg-brand text-white font-bold rounded-lg shadow-sm hover:opacity-90 active:scale-95 transition-all text-sm whitespace-nowrap">{saving ? "Menyimpan..." : "Simpan Konversi"}</button>
+            </div>
+          </div>
+
+          {loading ? <Spinner /> : txs.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada riwayat konversi</div> : (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[500px]">
+                <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-widest font-bold">
+                  <tr>
+                    <th className="px-4 py-3 border-b">Tanggal</th>
+                    <th className="px-4 py-3 border-b text-red-600">Dari Barang</th>
+                    <th className="px-4 py-3 border-b text-green-700">Menjadi Barang</th>
+                    <th className="px-4 py-3 border-b">Catatan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {txs.map(t => {
+                    const prodOut = productOpts.find(p => p.sku === t.out?.product_sku);
+                    const prodIn = productOpts.find(p => p.sku === t.in?.product_sku);
+                    return (
+                      <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-4 py-3 text-gray-500 text-xs">{new Date(t.date).toLocaleString('id-ID')}</td>
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-gray-800">{prodOut ? prodOut.name : t.out?.product_sku}</div>
+                          <div className="text-red-500 font-black text-xs">-{t.out?.qty}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-gray-800">{prodIn ? prodIn.name : t.in?.product_sku}</div>
+                          <div className="text-green-600 font-black text-xs">+{t.in?.qty}</div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500 italic">
+                          {t.notes || '-'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+    function OpnamePanel({ products, color, notify, onReload }) {
+      const [txs, setTxs] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const [form, setForm] = useState({ product_sku: "", physical_qty: "", notes: "" });
+
+      const loadData = useCallback(async () => {
+        setLoading(true);
+        const { data } = await db.from("inventory_transactions").select("*").eq('type', 'opname').order("transaction_date", { ascending: false }).limit(100);
+        setTxs(data || []);
+        setLoading(false);
+      }, []);
+
+      useEffect(() => { loadData(); }, [loadData]);
+
+      const save = async () => {
+        if (!form.product_sku) return notify("Produk wajib dipilih!");
+        if (form.physical_qty === "") return notify("Stok fisik wajib diisi!");
+        
+        const prod = products.find(p => p.sku === form.product_sku);
+        if (!prod) return notify("Produk tidak ditemukan!");
+        
+        const sysQty = prod.stock || 0;
+        const physQty = parseInt(form.physical_qty);
+        const diff = physQty - sysQty;
+        
+        if (diff === 0) return notify("Stok fisik sama dengan sistem, tidak ada penyesuaian.");
+        
+        setSaving(true);
+        try {
+          const { error } = await db.from("inventory_transactions").insert([{
+            type: 'opname', product_sku: form.product_sku, qty: diff, notes: form.notes || `Sistem: ${sysQty}, Fisik: ${physQty}`
+          }]);
+          if (error) throw error;
+          notify("Opname berhasil dicatat!");
+          setForm({ product_sku: "", physical_qty: "", notes: "" });
+          loadData();
+          onReload();
+        } catch (e) { notify("Gagal: " + e.message); }
+        setSaving(false);
+      };
+
+      const productOpts = useMemo(() => products.map(p => ({ sku: p.sku, name: p.variant_name ? `${p.name} - ${p.variant_name}` : p.name, stock: p.stock||0 })).sort((a,b) => a.name.localeCompare(b.name)), [products]);
+      const selectedProd = form.product_sku ? productOpts.find(p => p.sku === form.product_sku) : null;
+      const sysQty = selectedProd ? selectedProd.stock : 0;
+      const diff = form.physical_qty !== "" ? parseInt(form.physical_qty) - sysQty : 0;
+
+      return (
+        <div className="space-y-4 animate-fade-up">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 items-end">
+            <div className="flex-[2] w-full space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Pilih Produk *</label>
+                <select value={form.product_sku} onChange={e => setForm({...form, product_sku: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <option value="">-- Pilih Produk --</option>
+                  {productOpts.map(p => <option key={p.sku} value={p.sku}>{p.name} (Stok: {p.stock})</option>)}
+                </select>
+              </div>
+            </div>
+            
+            <div className="flex-1 w-full space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-widest">Stok Aktual (Fisik) *</label>
+                <input type="number" min="0" value={form.physical_qty} onChange={e => setForm({...form, physical_qty: e.target.value})} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="0" />
+              </div>
+            </div>
+
+            <div className="flex-1 w-full flex flex-col gap-2">
+              <div className="text-xs text-center py-2 px-3 bg-gray-50 rounded-lg border border-gray-200">
+                Selisih: <span className={`font-black ${diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-500' : 'text-gray-500'}`}>{diff > 0 ? '+'+diff : diff}</span>
+              </div>
+              <button onClick={save} disabled={saving || !form.product_sku || form.physical_qty === ""} className="w-full py-2.5 bg-blue-600 text-white font-bold rounded-lg shadow-sm hover:bg-blue-700 active:scale-95 transition-all text-sm disabled:opacity-50 disabled:active:scale-100">Sesuaikan Stok</button>
+            </div>
+          </div>
+
+          {loading ? <Spinner /> : txs.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada riwayat opname</div> : (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[500px]">
+                <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-widest font-bold">
+                  <tr>
+                    <th className="px-4 py-3 border-b">Tanggal</th>
+                    <th className="px-4 py-3 border-b">Produk</th>
+                    <th className="px-4 py-3 border-b">Penyesuaian</th>
+                    <th className="px-4 py-3 border-b">Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {txs.map(t => {
+                    const prod = productOpts.find(p => p.sku === t.product_sku);
+                    return (
+                      <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-4 py-3 text-gray-500 text-xs">{new Date(t.transaction_date).toLocaleString('id-ID')}</td>
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-gray-800">{prod ? prod.name : t.product_sku}</div>
+                          <div className="text-[10px] text-gray-400 font-mono">{t.product_sku}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded text-[11px] font-black ${t.qty > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                            {t.qty > 0 ? '+' : ''}{t.qty}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500 italic">
+                          {t.notes || '-'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // ── PRODUK ────────────────────────────────────────────────────
     function Produk({ products, notify, onReload, loading, color, settings, onReloadSettings }) {
       const defaultCats = ["Kurma", "Parfum", "Madu", "Tasbih", "Sajadah", "Busana Muslim", "Herbal", "Air Zamzam", "Souvenir", "Lainnya"];
@@ -759,8 +1722,39 @@
       const [search, setSearch] = useState("");
       const [saving, setSaving] = useState(false);
       const [showMenu, setShowMenu] = useState(false);
+      const [activeTab, setActiveTab] = useState('daftar');
       const [editVariants, setEditVariants] = useState(false);
       const fileRef = useRef();
+      const imageRef = useRef();
+      const [uploadingImage, setUploadingImage] = useState(false);
+      const [sliderIdx, setSliderIdx] = useState(0);
+      const [uploadTarget, setUploadTarget] = useState('main');
+
+      const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+      const [mediaPickerTarget, setMediaPickerTarget] = useState('main');
+
+      const openMediaPicker = (target) => {
+        setMediaPickerTarget(target);
+        setMediaPickerOpen(true);
+      };
+
+      const handleMediaSelect = (url) => {
+        if (typeof mediaPickerTarget === 'number') {
+          setForm(f => {
+            const nv = [...f.variants];
+            nv[mediaPickerTarget].image_url = url;
+            return { ...f, variants: nv };
+          });
+          notify("Foto varian diperbarui!");
+        } else {
+          setForm(f => {
+            const currentUrls = f.image_url ? f.image_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+            currentUrls.push(url);
+            return { ...f, image_url: currentUrls.join(', ') };
+          });
+          notify("Media ditambahkan!");
+        }
+      };
 
       const grouped = useMemo(() => {
         const map = {};
@@ -909,7 +1903,8 @@
         const variantPayloads = form.has_variants ? form.variants.map(v => ({
           sku: v.sku || `${form.sku}-${v.name.replace(/\s+/g, '').toUpperCase()}`,
           name: form.name, brand: form.brand, description: form.description,
-          category: form.category, sub_category: form.sub_category, etalase: form.etalase, image_url: form.image_url,
+          category: form.category, sub_category: form.sub_category, etalase: form.etalase, 
+          image_url: form.image_url ? (v.image_url ? `${form.image_url}, ${v.image_url}` : form.image_url) : (v.image_url || ''),
           variant_name: v.name,
           variant_options: form.variant_types.map(vt => ({ name: vt.name, options: (vt.options_string||"").split(",").map(s=>s.trim()).filter(Boolean) })),
           cost_price: parseInt(v.cost_price)||0,
@@ -961,6 +1956,12 @@
         const first = items[0] || p;
         const variants = items.filter(x => x.sku.includes('-'));
         
+        // Extract product images (shared by all variants)
+        const allUrls = items.map(x => (x.image_url || '').split(',').map(s=>s.trim()).filter(Boolean));
+        const firstUrls = allUrls[0] || [];
+        const productUrls = firstUrls.filter(u => allUrls.every(urls => urls.includes(u)));
+        const prodImageUrlStr = productUrls.join(', ');
+        
         setModal(first.id);
         setForm({
           sku: prefix, name: first.name, brand: first.brand || "", description: first.description || "",
@@ -968,13 +1969,20 @@
           category: first.category, sub_category: first.sub_category || "", etalase: first.etalase || "", is_po: first.is_po || false, weight: first.weight || "", weight_unit: first.weight_unit || "g",
           has_variants: variants.length > 0,
           variant_types: (first.variant_options || []).map(vt => ({ name: vt.name, options_string: (vt.options || []).join(", ") })),
-          variants: variants.map(v => ({ sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, promo_price: v.promo_price, promo_percentage: v.promo_percentage, stock: v.stock, is_po: !!v.is_po, weight: v.weight, weight_unit: v.weight_unit })),
-          image_url: first.image_url || ""
+          variants: variants.map(v => {
+            const vUrls = (v.image_url || '').split(',').map(s=>s.trim()).filter(Boolean);
+            const specificUrls = vUrls.filter(u => !productUrls.includes(u));
+            return {
+              sku: v.sku, name: v.variant_name, cost_price: v.cost_price, price: v.price, promo_price: v.promo_price, promo_percentage: v.promo_percentage, stock: v.stock, is_po: !!v.is_po, weight: v.weight, weight_unit: v.weight_unit,
+              image_url: specificUrls.join(', ') // store only variant specific image
+            };
+          }),
+          image_url: prodImageUrlStr || first.image_url || ""
         });
       };
 
       const exportXLSX = () => { const ws = XLSX.utils.json_to_sheet(products.map(p => ({ SKU: p.sku, Nama: p.name, NamaVarian: p.variant_name || "", Merk: p.brand, Deskripsi: p.description, HargaBeli: p.cost_price, Harga: p.price, Stok: p.stock, Kategori: p.category, SubKategori: p.sub_category || "", Etalase: p.etalase || "", PO: p.is_po ? "Ya" : "Tidak", Berat: `${p.weight || ""}${p.weight_unit || ""}`, Foto: p.image_url }))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, `produk_${Date.now()}.xlsx`); notify("Diexport!"); setShowMenu(false); };
-      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR001", Nama: "Kurma Ajwa", NamaVarian: "", Merk: "Azzahro", Deskripsi: "Kurma premium", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", SubKategori: "Premium", Etalase: "Depan", PO: "Tidak", Berat: "500g", Foto: "" }, { SKU: "KUR002-MER500", Nama: "Kurma Sukari", NamaVarian: "Merah 500g", Merk: "Azzahro", Deskripsi: "Manis lembut", HargaBeli: 35000, Harga: 45000, Stok: 5, Kategori: "Kurma", SubKategori: "Basah", Etalase: "Rak A", PO: "Tidak", Berat: "500g", Foto: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
+      const dlTemplate = () => { const ws = XLSX.utils.json_to_sheet([{ SKU: "KUR001", Nama: "Kurma Ajwa", NamaVarian: "", Merk: "Azzahro", Deskripsi: "Kurma premium", HargaBeli: 40000, Harga: 50000, Stok: 10, Kategori: "Kurma", SubKategori: "Premium", Etalase: "Depan", PO: "Tidak", Berat: "500g", Foto: "https://link-foto1.com, https://link-foto2.com" }, { SKU: "KUR002-MER500", Nama: "Kurma Sukari", NamaVarian: "Merah 500g", Merk: "Azzahro", Deskripsi: "Manis lembut", HargaBeli: 35000, Harga: 45000, Stok: 5, Kategori: "Kurma", SubKategori: "Basah", Etalase: "Rak A", PO: "Tidak", Berat: "500g", Foto: "" }]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Produk"); XLSX.writeFile(wb, "template_produk.xlsx"); notify("Template didownload!"); setShowMenu(false); };
       const importFile = e => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
@@ -1016,7 +2024,23 @@
 
       return (
         <div className="p-4">
-          <div className="flex gap-2 mb-4">
+          <div className="flex gap-1 overflow-x-auto no-scrollbar mb-4 bg-gray-100 p-1 rounded-xl border border-gray-200">
+            {[
+              { id: 'daftar', label: 'Daftar Produk' },
+              { id: 'vendor', label: 'Vendor' },
+              { id: 'mutasi', label: 'Mutasi Stok' },
+              { id: 'konversi', label: 'Konversi' },
+              { id: 'opname', label: 'Opname' }
+            ].map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex-1 min-w-[100px] px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider whitespace-nowrap transition-all ${activeTab === t.id ? 'bg-white shadow-sm text-brand' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === 'daftar' && (
+            <>
+              <div className="flex gap-2 mb-4">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / SKU..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
             <button onClick={() => { setModal("add"); setForm({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", promo_price: "", promo_percentage: "", stock: "", category: "Kurma", sub_category: "", etalase: "", is_po: false, weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
             <div className="relative">
@@ -1042,7 +2066,7 @@
 
           <div className="flex flex-col gap-3">
             {loading ? <Spinner /> : filtered.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Tidak ada produk</div> : filtered.map(p => <div key={p.id} className="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex gap-3 items-center group">
-              <img src={p.image_url || `https://placehold.co/80x80/114232/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} alt={p.name} className="w-16 h-16 rounded-xl object-cover shrink-0" onError={e => e.target.src = `https://placehold.co/80x80/114232/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} />
+              <img src={(p.image_url || "").split(',')[0].trim() || `https://placehold.co/80x80/114232/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} alt={p.name} className="w-16 h-16 rounded-xl object-cover shrink-0" onError={e => e.target.src = `https://placehold.co/80x80/114232/white?text=${encodeURIComponent(p.name.slice(0, 2))}`} />
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap gap-1.5 mb-1">
                   <span className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">{p.sku}</span>
@@ -1070,6 +2094,28 @@
 
           {modal && <Modal onClose={() => setModal(null)} title={modal === "add" ? "Tambah Produk" : "Edit Produk"} wide={true}>
             <div className="space-y-4">
+              {(() => {
+                const mainImages = (form.image_url||'').split(',').map(s=>s.trim()).filter(Boolean);
+                if (mainImages.length === 0) mainImages.push(`https://placehold.co/400x300/114232/white?text=${encodeURIComponent(form.name.slice(0,2) || 'PR')}`);
+                const variantImages = (form.variants||[]).map(v => v.image_url).filter(Boolean);
+                const allImages = [...mainImages, ...variantImages];
+                const currentImg = allImages[sliderIdx] || allImages[0];
+                return (
+                  <div className="relative w-full aspect-video sm:aspect-[21/9] bg-gray-100 rounded-2xl overflow-hidden shadow-inner">
+                    <img src={currentImg} className="w-full h-full object-contain" />
+                    {allImages.length > 1 && (
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10 bg-black/40 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                        {allImages.map((_, i) => (
+                          <button key={i} onClick={() => setSliderIdx(i)} className={`w-2 h-2 rounded-full transition-all ${i === sliderIdx ? 'bg-white scale-125' : 'bg-white/50 hover:bg-white/80'}`} />
+                        ))}
+                      </div>
+                    )}
+                    <div className="absolute top-3 left-3 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-sm">
+                       {sliderIdx < mainImages.length ? 'Foto Utama' : `Foto Varian`}
+                    </div>
+                  </div>
+                );
+              })()}
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Etalase (Opsional)</label>
                 <input list="etalase-list" value={form.etalase} onChange={e => setForm(f => ({ ...f, etalase: e.target.value }))} placeholder="Pilih atau ketik etalase..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
@@ -1105,9 +2151,38 @@
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">URL Foto / Video</label>
-                <input value={form.image_url} onChange={e => setForm(p => ({ ...p, image_url: e.target.value }))} placeholder="https://url1.com, https://url2.com" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-                <p className="text-[10px] text-gray-400 mt-1">Pisahkan dengan koma. Maksimal 5 URL.</p>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Foto / Video Produk</label>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {(form.image_url || '').split(',').map(s => s.trim()).filter(Boolean).map((url, idx) => (
+                      <div key={idx} className="relative w-20 h-20 bg-gray-100 rounded-xl overflow-hidden group">
+                        {url.match(/\.(mp4|webm|ogg|mov)$/i) || url.includes('/video/upload/') ? (
+                          <video src={url} className="w-full h-full object-cover" />
+                        ) : (
+                          <img src={url} className="w-full h-full object-cover" />
+                        )}
+                        <button onClick={() => {
+                          const urls = form.image_url.split(',').map(s => s.trim()).filter(Boolean);
+                          urls.splice(idx, 1);
+                          setForm(p => ({ ...p, image_url: urls.join(', ') }));
+                        }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                      </div>
+                    ))}
+                    <button onClick={() => openMediaPicker('main')} className="w-20 h-20 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:border-brand/50 hover:text-brand transition-colors">
+                      {uploadingImage && uploadTarget === 'main' ? (
+                        <Spinner />
+                      ) : (
+                        <>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+                          <span className="text-[10px] font-bold mt-1">Tambah</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1">Pilih gambar dari galeri atau upload baru.</p>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">SKU Induk *</label>
@@ -1210,22 +2285,34 @@
                     <span className="text-[10px] text-gray-400 font-medium">{form.variants.length} kombinasi</span>
                   </div>
                   <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-                    <table className="w-full text-left border-collapse min-w-[950px]">
+                    <table className="w-full text-left border-collapse min-w-[1050px]">
                       <thead>
                         <tr className="border-b border-gray-100">
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[5%] text-center">Foto</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">Varian</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">SKU</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">H. Beli</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Jual</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[15%]">H. Promo</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">Diskon%</th>
-                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%] text-center">Stok</th>
+                          <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[5%] text-center">Stok</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[5%] text-center">PO</th>
                           <th className="pb-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider w-[10%]">Berat</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {form.variants.map((v, i) => <tr key={i} className="hover:bg-gray-100/50 transition-colors">
+                        {form.variants.map((v, i) => <tr key={i} className="hover:bg-gray-100/50 transition-colors" onClick={() => {
+                          const mainCount = (form.image_url || '').split(',').map(s=>s.trim()).filter(Boolean).length || 1;
+                          const varImages = form.variants.map(v => v.image_url).filter(Boolean);
+                          const idxInVarImages = form.variants.slice(0, i+1).filter(v => v.image_url).length - 1;
+                          if (idxInVarImages >= 0) setSliderIdx(mainCount + idxInVarImages);
+                        }}>
+                          <td className="py-2 pr-2 text-center">
+                            <button onClick={(e) => { e.stopPropagation(); openMediaPicker(i); }} className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center overflow-hidden hover:border-brand relative group mx-auto">
+                              {v.image_url || form.image_url ? <img src={(v.image_url || form.image_url).split(',')[0].trim()} className="w-full h-full object-cover" /> : <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2-2v12a2 2 0 002 2z"></path></svg>}
+                              {uploadingImage && uploadTarget === i && <div className="absolute inset-0 bg-white/80 flex items-center justify-center"><Spinner /></div>}
+                            </button>
+                          </td>
                           <td className="py-2.5 pr-2 text-sm font-bold text-gray-800">{v.name}</td>
                           <td className="py-2 pr-2"><input value={v.sku} onChange={e => updateVarItem(i, 'sku', e.target.value.toUpperCase())} placeholder="SKU" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none uppercase font-mono" /></td>
                           <td className="py-2 pr-2"><input value={v.cost_price || ""} onChange={e => updateVarItem(i, 'cost_price', parseInt(e.target.value)||0)} type="number" placeholder="0" className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded text-xs focus:outline-none" /></td>
@@ -1319,6 +2406,14 @@
               )}
             </div>
           </Modal>}
+        </>
+      )}
+
+          {activeTab === 'vendor' && <VendorPanel color={color} notify={notify} />}
+          {activeTab === 'mutasi' && <MutasiStokPanel products={products} color={color} notify={notify} onReload={onReload} />}
+          {activeTab === 'konversi' && <KonversiPanel products={products} color={color} notify={notify} onReload={onReload} />}
+          {activeTab === 'opname' && <OpnamePanel products={products} color={color} notify={notify} onReload={onReload} />}
+          {mediaPickerOpen && <MediaPickerModal onClose={() => setMediaPickerOpen(false)} onSelect={handleMediaSelect} settings={settings} notify={notify} />}
         </div>
       );
     }
@@ -1644,18 +2739,38 @@
 
     function PromoPage({ promos, products, notify, onReload, color }) {
       const [modal, setModal] = useState(null);
-      const empty = { name: "", type: "discount", disc_type: "pct", disc_value: "", min_purchase: "", max_discount: "", start_date: "", end_date: "", bundle_items: [], active: true };
+      const empty = { name: "", type: "discount", benefit_type: "discount", disc_type: "pct", disc_value: "", min_purchase: "", max_discount: "", start_date: "", end_date: "", bundle_items: [], free_bundle_items: [], promo_code: "", usage_limit: "", active: true };
       const [form, setForm] = useState(empty);
       const [saving, setSaving] = useState(false);
       const now = new Date();
       const isActive = p => { if (!p.active) return false; if (p.start_date && new Date(p.start_date) > now) return false; if (p.end_date && new Date(p.end_date) < now) return false; return true; };
-      const toggleBundle = id => setForm(f => ({ ...f, bundle_items: f.bundle_items.includes(id) ? f.bundle_items.filter(x => x !== id) : [...f.bundle_items, id] }));
+      const toggleBundle = id => setForm(f => ({ ...f, bundle_items: (f.bundle_items||[]).includes(id) ? f.bundle_items.filter(x => x !== id) : [...(f.bundle_items||[]), id] }));
+      const toggleFreeBundle = id => setForm(f => ({ ...f, free_bundle_items: (f.free_bundle_items||[]).includes(id) ? f.free_bundle_items.filter(x => x !== id) : [...(f.free_bundle_items||[]), id] }));
+
+      const generatePromoCode = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let code = 'PROMO-';
+        for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+        setForm(f => ({ ...f, promo_code: code }));
+      };
 
       const save = async () => {
         if (!form.name) return notify("Nama promo wajib!");
-        if (!form.disc_value) return notify("Nilai diskon wajib!");
+        if (form.type !== "bundling" || form.benefit_type !== "free_product") {
+          if (!form.disc_value) return notify("Nilai diskon wajib!");
+        }
+        if (form.type === "voucher" && !form.promo_code) return notify("Kode voucher wajib!");
         setSaving(true);
-        const payload = { name: form.name, type: form.type, disc_type: form.disc_type, disc_value: parseFloat(form.disc_value), min_purchase: parseFloat(form.min_purchase) || 0, max_discount: parseFloat(form.max_discount) || 0, bundle_items: form.bundle_items, start_date: form.start_date || null, end_date: form.end_date || null, active: form.active };
+        const payload = { 
+          name: form.name, type: form.type, benefit_type: form.type === "bundling" ? form.benefit_type : "discount", 
+          disc_type: form.disc_type, disc_value: parseFloat(form.disc_value) || 0, 
+          min_purchase: parseFloat(form.min_purchase) || 0, max_discount: parseFloat(form.max_discount) || 0, 
+          bundle_items: form.type === "bundling" ? (form.bundle_items || []) : [], 
+          free_bundle_items: (form.type === "bundling" && form.benefit_type === "free_product") ? (form.free_bundle_items || []) : [],
+          promo_code: form.type === "voucher" ? form.promo_code : null,
+          usage_limit: form.type === "voucher" ? (parseInt(form.usage_limit) || 0) : 0,
+          start_date: form.start_date || null, end_date: form.end_date || null, active: form.active 
+        };
         let error;
         if (modal === "add") { ({ error } = await db.from("promos").insert(payload)); if (!error) notify("Promo ditambahkan!"); }
         else { ({ error } = await db.from("promos").update(payload).eq("id", modal)); if (!error) notify("Diupdate!"); }
@@ -1680,13 +2795,22 @@
                     <span className="font-extrabold text-gray-800 text-base">{p.name}</span>
                     <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider ${isActive(p) ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{isActive(p) ? "Aktif" : "Nonaktif"}</span>
                   </div>
-                  <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5">
-                    <span className="bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{p.type === "discount" ? "💰 Diskon" : "📦 Bundling"}</span>
-                    <span>{p.disc_type === "pct" ? `${p.disc_value}%` : `${fmt(p.disc_value)}`} off{p.min_purchase > 0 ? ` · min ${fmt(p.min_purchase)}` : ""}</span>
+                  <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5 flex-wrap">
+                    <span className="bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{p.type === "voucher" ? "🎟️ Voucher" : p.type === "discount" ? "💰 Diskon" : "📦 Bundling"}</span>
+                    {p.type === "voucher" && <span className="font-mono text-brand font-bold">{p.promo_code}</span>}
+                    {p.type === "voucher" && p.usage_limit > 0 && <span className="text-[10px] bg-brandLight text-brand px-1.5 py-0.5 rounded">Limit: {p.usage_limit}</span>}
+                    
+                    {p.benefit_type === "free_product" ? (
+                      <span className="text-orange-600 font-bold">Gratis {(p.free_bundle_items || []).length} Produk</span>
+                    ) : (
+                      <span>{p.disc_type === "pct" ? `${p.disc_value}%` : `${fmt(p.disc_value)}`} off</span>
+                    )}
+                    
+                    {p.min_purchase > 0 && <span>· min {fmt(p.min_purchase)}</span>}
                   </div>
                 </div>
                 <div className="flex gap-1.5 shrink-0">
-                  <button onClick={() => { setModal(p.id); setForm({ ...p, disc_value: String(p.disc_value), min_purchase: String(p.min_purchase || ""), max_discount: String(p.max_discount || ""), start_date: p.start_date ? p.start_date.slice(0, 16) : "", end_date: p.end_date ? p.end_date.slice(0, 16) : "", bundle_items: p.bundle_items || [] }); }} className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-lg transition-colors">✏️</button>
+                  <button onClick={() => { setModal(p.id); setForm({ ...empty, ...p, disc_value: String(p.disc_value), min_purchase: String(p.min_purchase || ""), max_discount: String(p.max_discount || ""), start_date: p.start_date ? p.start_date.slice(0, 16) : "", end_date: p.end_date ? p.end_date.slice(0, 16) : "", bundle_items: p.bundle_items || [], free_bundle_items: p.free_bundle_items || [] }); }} className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-lg transition-colors">✏️</button>
                   <button onClick={() => del(p.id)} className="w-8 h-8 flex items-center justify-center bg-red-50 hover:bg-red-100 text-red-500 rounded-lg transition-colors">✕</button>
                 </div>
               </div>
@@ -1703,25 +2827,52 @@
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Tipe Promo</label>
                 <div className="flex gap-2">
-                  {[{ id: "discount", label: "💰 Diskon Biasa" }, { id: "bundling", label: "📦 Bundling Produk" }].map(t => <button key={t.id} onClick={() => setForm(f => ({ ...f, type: t.id }))} className={`flex-1 py-3 rounded-xl text-xs font-bold transition-colors border-2 ${form.type === t.id ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{t.label}</button>)}
+                  {[{ id: "discount", label: "💰 Diskon" }, { id: "bundling", label: "📦 Bundling" }, { id: "voucher", label: "🎟️ Voucher" }].map(t => <button key={t.id} onClick={() => setForm(f => ({ ...f, type: t.id }))} className={`flex-1 py-3 rounded-xl text-xs font-bold transition-colors border-2 ${form.type === t.id ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{t.label}</button>)}
                 </div>
               </div>
+              
+              {form.type === "voucher" && <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Kode Voucher *</label>
+                <div className="flex gap-2 mb-3">
+                  <input value={form.promo_code} onChange={e => setForm(f => ({ ...f, promo_code: e.target.value.toUpperCase() }))} placeholder="cth: AZZAHRO10" className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 uppercase font-mono font-bold text-brand" />
+                  <button onClick={generatePromoCode} className="px-4 bg-brandLight text-brand hover:bg-brand/20 font-black uppercase tracking-wider text-[10px] rounded-xl transition-all">Generate</button>
+                </div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Batas Pemakaian (Kuota)</label>
+                <input value={form.usage_limit} onChange={e => setForm(f => ({ ...f, usage_limit: e.target.value }))} type="number" placeholder="0 = tanpa batas" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>}
+
               {form.type === "bundling" && <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Pilih Produk Bundling</label>
-                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl p-2 bg-gray-50 space-y-1">
-                  {products.map(p => <div key={p.id} onClick={() => toggleBundle(p.id)} className={`flex items-center gap-3 p-2 cursor-pointer rounded-lg transition-colors border ${form.bundle_items.includes(p.id) ? 'bg-brandLight border-brand/30' : 'bg-white border-transparent hover:border-gray-200'}`}>
-                    <div className={`w-5 h-5 rounded md border-2 flex items-center justify-center shrink-0 ${form.bundle_items.includes(p.id) ? 'border-brand bg-brand' : 'border-gray-300 bg-white'}`}>{form.bundle_items.includes(p.id) && <span className="text-white text-xs font-bold">✓</span>}</div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Syarat Produk Bundling</label>
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl p-2 bg-gray-50 space-y-1 mb-3">
+                  {products.map(p => <div key={p.id} onClick={() => toggleBundle(p.id)} className={`flex items-center gap-3 p-2 cursor-pointer rounded-lg transition-colors border ${(form.bundle_items||[]).includes(p.id) ? 'bg-brandLight border-brand/30' : 'bg-white border-transparent hover:border-gray-200'}`}>
+                    <div className={`w-5 h-5 rounded md border-2 flex items-center justify-center shrink-0 ${(form.bundle_items||[]).includes(p.id) ? 'border-brand bg-brand' : 'border-gray-300 bg-white'}`}>{(form.bundle_items||[]).includes(p.id) && <span className="text-white text-xs font-bold">✓</span>}</div>
                     <span className="text-sm font-medium text-gray-700 truncate">{p.name}</span>
                   </div>)}
                 </div>
+                
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Benefit Bundling</label>
+                <div className="flex gap-2 mb-3">
+                  {[{ id: "discount", label: "Diskon Harga" }, { id: "free_product", label: "Gratis Produk Lain" }].map(t => <button key={t.id} onClick={() => setForm(f => ({ ...f, benefit_type: t.id }))} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border-2 ${form.benefit_type === t.id ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{t.label}</button>)}
+                </div>
+                
+                {form.benefit_type === "free_product" && <div>
+                  <label className="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase">Pilih Produk Gratis</label>
+                  <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl p-2 bg-gray-50 space-y-1">
+                    {products.map(p => <div key={p.id} onClick={() => toggleFreeBundle(p.id)} className={`flex items-center gap-3 p-2 cursor-pointer rounded-lg transition-colors border ${(form.free_bundle_items||[]).includes(p.id) ? 'bg-orange-50 border-orange-200' : 'bg-white border-transparent hover:border-gray-200'}`}>
+                      <div className={`w-5 h-5 rounded md border-2 flex items-center justify-center shrink-0 ${(form.free_bundle_items||[]).includes(p.id) ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}>{(form.free_bundle_items||[]).includes(p.id) && <span className="text-white text-xs font-bold">✓</span>}</div>
+                      <span className="text-sm font-medium text-gray-700 truncate">{p.name}</span>
+                    </div>)}
+                  </div>
+                </div>}
               </div>}
-              <div>
+
+              {(form.type !== "bundling" || form.benefit_type !== "free_product") && <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Besaran Diskon *</label>
                 <div className="flex gap-2 mb-2">
                   {[{ id: "pct", label: "% Persen" }, { id: "nominal", label: "Rp Nominal" }].map(t => <button key={t.id} onClick={() => setForm(f => ({ ...f, disc_type: t.id }))} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border-2 ${form.disc_type === t.id ? 'border-brand bg-brandLight text-brand' : 'border-gray-100 bg-white text-gray-500 hover:border-gray-200'}`}>{t.label}</button>)}
                 </div>
                 <input value={form.disc_value} onChange={e => setForm(f => ({ ...f, disc_value: e.target.value }))} type="number" placeholder={form.disc_type === "pct" ? "cth: 10" : "cth: 20000"} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
-              </div>
+              </div>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase">Min. Belanja</label>
@@ -2183,6 +3334,13 @@
       const [cModal, setCModal] = useState(null);
       const [stForm, setStForm] = useState({ ...settings });
       const [saving, setSaving] = useState(false);
+      const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+      const [mediaPickerTarget, setMediaPickerTarget] = useState(null);
+
+      const handleMediaSelect = (url) => {
+        setStForm(s => ({ ...s, [mediaPickerTarget]: url }));
+        notify("Gambar diperbarui!");
+      };
 
       useEffect(() => { setStForm({ ...settings }); }, [settings]);
 
@@ -2257,23 +3415,24 @@
 
             {cashiers.length === 0 && <div className="text-center text-gray-400 py-10 text-sm font-medium bg-white rounded-2xl border border-gray-100">Belum ada kasir terdaftar</div>}
 
-            <div className="flex flex-col gap-3">
-              {cashiers.map(c => <div key={c.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-dark to-gray-600 flex items-center justify-center text-white font-black text-xl shadow-inner shrink-0">{c.name[0].toUpperCase()}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-bold text-gray-800 text-sm truncate">{c.name}</h3>
-                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider ${c.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? "Aktif" : "Off"}</span>
-                    </div>
-                    <div className="text-xs text-gray-400 font-mono font-medium">{c.code}</div>
-                  </div>
-                </div>
-                <div className="flex gap-2 border-t border-gray-50 pt-3">
-                  <button onClick={() => { setCModal(c.id); setCForm({ code: c.code, name: c.name }); }} className="flex-1 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold transition-colors border border-gray-200">Edit</button>
-                  <button onClick={() => toggleCashier(c)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border ${c.active ? 'bg-red-50 text-red-600 border-red-100 hover:bg-red-100' : 'bg-brandLight text-brand border-brand/20 hover:bg-brand/10'}`}>{c.active ? "Matikan" : "Aktifkan"}</button>
-                  <button onClick={() => delCashier(c.id)} className="w-12 py-2 bg-red-50 hover:bg-red-100 text-red-500 rounded-lg text-xs font-bold transition-colors border border-red-100 flex justify-center items-center">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {cashiers.map(c => <div key={c.id} className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 flex flex-col items-center text-center relative group">
+                <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${c.active ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-dark to-gray-600 flex items-center justify-center text-white font-black text-lg shadow-inner mb-2">{c.name ? c.name[0].toUpperCase() : "?"}</div>
+                <div className="font-bold text-gray-800 text-xs truncate w-full">{c.name}</div>
+                <div className="text-[10px] text-gray-400 font-mono mb-2">{c.code}</div>
+                
+                <div className="flex gap-1 w-full border-t border-gray-50 pt-2 mt-auto">
+                  <button onClick={() => { setCModal(c.id); setCForm({ code: c.code, name: c.name }); }} className="flex-1 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-[10px] font-bold transition-colors border border-gray-100">Edit</button>
+                  <button onClick={() => toggleCashier(c)} className={`p-1.5 rounded-lg text-[10px] font-bold transition-colors border ${c.active ? 'text-red-600 border-red-100 hover:bg-red-50' : 'text-brand border-brand/20 hover:bg-brand/10'}`}>
+                    {c.active ? (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18.36 6.64a9 9 0 11-12.73 0M12 2v10"/></svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.286L13 21l-2.286-6.857L5 12l5.714-2.286L13 3z"/></svg>
+                    )}
+                  </button>
+                  <button onClick={() => delCashier(c.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-red-100 flex justify-center items-center">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                   </button>
                 </div>
               </div>)}
@@ -2318,7 +3477,14 @@
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-5 space-y-4">
               {[{ label: "Nama Toko", key: "store_name", ph: "Toko Oleh-Oleh Haji & Umroh" }, { label: "Tagline", key: "store_tagline", ph: "Pilihan Berkah dari Tanah Suci" }, { label: "Alamat Lengkap", key: "store_address", ph: "Jl. Contoh No. 1, Semarang" }, { label: "No. Telepon", key: "store_phone", ph: "08xxxxxxxxxx" }, { label: "No. WhatsApp Admin", key: "wa_number", ph: "628xxxxxxxxxx" }, { label: "URL Logo (Image)", key: "store_logo", ph: "https://..." }, { label: "Nomor Rekening Bank", key: "store_bank_account", ph: "BCA 1234567890 a/n Toko Azzahro" }, { label: "URL Gambar QR Code (Pembayaran)", key: "store_qr_image", ph: "https://..." }].map(f => <div key={f.key}>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
-                <input value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
+                {['store_logo', 'store_qr_image'].includes(f.key) ? (
+                  <div className="flex gap-2">
+                    <input value={stForm[f.key] || ""} readOnly className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder={f.ph} />
+                    <button onClick={() => { setMediaPickerTarget(f.key); setMediaPickerOpen(true); }} className="bg-brand text-white px-4 py-3 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
+                  </div>
+                ) : (
+                  <input value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
+                )}
               </div>)}
               {stForm.store_logo && <div className="pt-2">
                 <label className="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Preview Logo</label>
@@ -2400,6 +3566,7 @@
             </div>
             <button onClick={saveSettings} disabled={saving} className="w-full py-4 bg-dark hover:bg-gray-900 text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">{saving ? "Menyimpan..." : "💾 Simpan Desain"}</button>
           </div>}
+          {mediaPickerOpen && <MediaPickerModal onClose={() => setMediaPickerOpen(false)} onSelect={handleMediaSelect} settings={settings} notify={notify} />}
         </div>
       );
     }

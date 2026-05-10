@@ -63,7 +63,7 @@
       );
     }
 
-    function App() {
+        function App() {
       const [s, setS] = useState(DEFAULTS);
       const [loading, setLoading] = useState(true);
 
@@ -91,7 +91,7 @@
       return (
         <div className="min-h-screen max-w-md mx-auto bg-white shadow-sm flex flex-col">
 
-          {/* Hero */}
+          {/* 1. Hero */}
           <div className="relative overflow-hidden" style={{ minHeight: 280 }}>
             {s.about_hero_image ? (
               <img src={s.about_hero_image} alt="Hero" className="w-full h-72 object-cover" onError={e => e.target.style.display='none'} />
@@ -110,7 +110,7 @@
 
           <div className="flex-1 px-5 py-6 space-y-8">
 
-            {/* Deskripsi */}
+            {/* 2. Deskripsi Toko */}
             <div className="animate-fade-up">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-1 h-5 rounded-full" style={{ background: color }}></div>
@@ -120,10 +120,13 @@
                 {descParagraphs.map((p, i) => (
                   <p key={i} className="text-gray-600 text-sm leading-relaxed">{p}</p>
                 ))}
+                {s.about_description_image && (
+                  <img src={s.about_description_image} className="w-full h-auto rounded-2xl shadow-sm mt-4 object-cover" alt="Deskripsi Toko" />
+                )}
               </div>
             </div>
 
-            {/* Layanan */}
+            {/* 3. Highlight */}
             {services.length > 0 && (
               <div className="animate-fade-up">
                 <div className="flex items-center gap-2 mb-4">
@@ -144,32 +147,57 @@
               </div>
             )}
 
-            {/* Kontak & CTA */}
-            <div className="animate-fade-up space-y-3">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-1 h-5 rounded-full" style={{ background: color }}></div>
-                <h2 className="font-extrabold text-lg text-gray-900">Kontak</h2>
-              </div>
-              {s.store_address && (
-                <div className="flex items-start gap-3 bg-grayLight p-4 rounded-2xl border border-gray-100">
-                  <svg className="w-5 h-5 shrink-0 mt-0.5" style={{ color }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                  <span className="text-sm text-gray-600 leading-relaxed">{s.store_address}</span>
-                </div>
-              )}
-              <a href={"https://wa.me/" + waNum} target="_blank" className="flex items-center justify-center gap-3 w-full py-4 rounded-2xl text-white font-bold text-sm shadow-md transition-transform active:scale-[0.98]" style={{ background: '#25D366' }}>
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.274.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.824zm-3.423-14.416c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm.029 18.88c-1.161 0-2.305-.292-3.318-.844l-3.677.964.984-3.595c-.607-1.052-.927-2.246-.926-3.468.001-5.824 4.74-10.563 10.581-10.563 5.824 0 10.564 4.741 10.564 10.564 0 5.824-4.74 10.564-10.564 10.564z"/></svg>
-                {s.about_cta_label || "Hubungi Kami via WhatsApp"}
+            {/* 4. Kontak */}
+            <div className="animate-fade-up">
+              <a href={"https://wa.me/" + waNum} target="_blank" className="flex items-center justify-center gap-3 w-full py-4 px-4 rounded-2xl text-white font-bold text-sm shadow-md transition-transform active:scale-[0.98]" style={{ background: '#25D366' }}>
+                <svg className="w-6 h-6 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.274.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.824zm-3.423-14.416c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm.029 18.88c-1.161 0-2.305-.292-3.318-.844l-3.677.964.984-3.595c-.607-1.052-.927-2.246-.926-3.468.001-5.824 4.74-10.563 10.581-10.563 5.824 0 10.564 4.741 10.564 10.564 0 5.824-4.74 10.564-10.564 10.564z"/></svg>
+                <span className="truncate">{s.about_cta_label || "Hubungi Kami via WhatsApp"}</span>
               </a>
-              {extraLinks.map((lk, i) => (
-                <a key={i} href={lk.url} className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl font-bold text-sm border-2 transition-colors" style={{ color, borderColor: color }}>
-                  {lk.label}
-                </a>
-              ))}
             </div>
+
+            {/* 5. Lokasi */}
+            {(s.store_address || s.store_gmap_url) && (
+              <div className="animate-fade-up space-y-3">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-5 rounded-full" style={{ background: color }}></div>
+                  <h2 className="font-extrabold text-lg text-gray-900">Lokasi Kami</h2>
+                </div>
+                {s.store_address && (
+                  <div className="flex items-start gap-3 bg-grayLight p-4 rounded-2xl border border-gray-100">
+                    <svg className="w-5 h-5 shrink-0 mt-0.5" style={{ color }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span className="text-sm text-gray-600 leading-relaxed">{s.store_address}</span>
+                  </div>
+                )}
+                {s.store_gmap_url && (
+                  <div className="rounded-2xl overflow-hidden border border-gray-100 bg-gray-50 aspect-video">
+                    {s.store_gmap_url.includes('<iframe') ? (
+                       <div dangerouslySetInnerHTML={{ __html: s.store_gmap_url.replace(/width="[^"]*"/, 'width="100%"').replace(/height="[^"]*"/, 'height="100%"') }} className="w-full h-full" />
+                    ) : (
+                      <iframe src={s.store_gmap_url} width="100%" height="100%" style={{ border: 0 }} allowFullScreen loading="lazy"></iframe>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 6. Link Tambahan */}
+            {extraLinks.length > 0 && (
+              <div className="animate-fade-up space-y-3">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-5 rounded-full" style={{ background: color }}></div>
+                  <h2 className="font-extrabold text-lg text-gray-900">Link Terkait</h2>
+                </div>
+                {extraLinks.map((lk, i) => (
+                  <a key={i} href={lk.url} className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl font-bold text-sm border-2 transition-colors" style={{ color, borderColor: color }}>
+                    {lk.label}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Footer */}
-          <div className="border-t border-gray-100 p-5 text-center text-xs text-gray-400">
+          <div className="border-t border-gray-100 p-5 text-center text-xs text-gray-400 mt-8">
             © {new Date().getFullYear()} {s.store_name} · <a href="index.html" className="text-brand font-medium hover:underline">Kembali ke Katalog</a>
           </div>
         </div>

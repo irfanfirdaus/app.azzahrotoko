@@ -95,11 +95,11 @@
       );
     }
 
-    const applyPromos = (cart, promos) => {
+    const applyPromos = (cart, promos, promoCodeInput, products) => {
       const now = new Date();
       const active = promos.filter(p => { if (!p.active) return false; if (p.start_date && new Date(p.start_date) > now) return false; if (p.end_date && new Date(p.end_date) < now) return false; return true; });
       const sub = cart.reduce((s, x) => s + x.price * x.qty, 0);
-      let disc = 0, applied = [];
+      let disc = 0, applied = [], freeItems = [];
       active.forEach(pr => {
         if (pr.type === "discount") {
           if (pr.min_purchase && sub < pr.min_purchase) return;
@@ -109,12 +109,27 @@
         }
         if (pr.type === "bundling") {
           if (!(pr.bundle_items || []).every(id => cart.find(x => x.id === id))) return;
+          if (pr.benefit_type === "free_product") {
+            (pr.free_bundle_items || []).forEach(fid => {
+              const prod = products.find(p => p.id === fid);
+              if (prod) freeItems.push({ id: prod.id, sku: prod.sku, name: prod.name, vName: prod.variant_name || null, normalPrice: prod.price, price: 0, qty: 1, ckey: prod.sku + '-FREE', stock: prod.stock, is_po: prod.is_po, isFree: true });
+            });
+            applied.push({ name: pr.name, discount: 0, id: pr.id });
+          } else {
+            let d = pr.disc_type === "pct" ? sub * pr.disc_value / 100 : pr.disc_value;
+            if (pr.max_discount && d > pr.max_discount) d = pr.max_discount;
+            disc += d; applied.push({ name: pr.name, discount: d, id: pr.id });
+          }
+        }
+        if (pr.type === "voucher" && promoCodeInput && pr.promo_code === promoCodeInput) {
+          if (pr.usage_limit > 0 && (pr.usage_count||0) >= pr.usage_limit) return;
+          if (pr.min_purchase && sub < pr.min_purchase) return;
           let d = pr.disc_type === "pct" ? sub * pr.disc_value / 100 : pr.disc_value;
           if (pr.max_discount && d > pr.max_discount) d = pr.max_discount;
           disc += d; applied.push({ name: pr.name, discount: d, id: pr.id });
         }
       });
-      return { discountTotal: disc, appliedPromos: applied };
+      return { discountTotal: disc, appliedPromos: applied, freeItems };
     };
 
     function PinPad({ onSuccess, cashiers, settings, notify }) {
@@ -265,154 +280,199 @@
       );
     }
 
-    function LaporanPanel({ sessionTxs, loadSessionTxs, user, setTxData, setModal, fmt, db, color, settings, customers }) {
+        function TransaksiPanel({ user, db, color, settings, customers, fmt, setTxData, setModal, onResume }) {
       const today = new Date().toISOString().split('T')[0];
-      const [dateFilter, setDateFilter] = useState(today);
-      const [txList, setTxList] = useState(null);
+      const [tab, setTab] = useState('belum_selesai'); // belum_selesai, selesai, dibatalkan, po
+      const [filterType, setFilterType] = useState('today');
+      const [customDate, setCustomDate] = useState(today);
+      const [dataKasir, setDataKasir] = useState([]);
+      const [dataOnline, setDataOnline] = useState([]);
       const [loading, setLoading] = useState(false);
-      const [tab, setTab] = useState('tx'); // 'tx' or 'items'
+      const [expanded, setExpanded] = useState({});
 
-      const load = async () => {
+      const loadData = async () => {
         setLoading(true);
-        const start = dateFilter + 'T00:00:00';
-        const end = dateFilter + 'T23:59:59';
-        const { data } = await db.from('transactions').select('*, transaction_items(*)').gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false });
-        setTxList(data || []);
+        let start, end;
+        const now = new Date();
+        if (filterType === 'today') {
+          start = new Date(now.setHours(0,0,0,0)).toISOString();
+          end = new Date(now.setHours(23,59,59,999)).toISOString();
+        } else if (filterType === 'week') {
+          const firstDay = new Date(now.setDate(now.getDate() - now.getDay()));
+          start = new Date(firstDay.setHours(0,0,0,0)).toISOString();
+          end = new Date(new Date().setHours(23,59,59,999)).toISOString();
+        } else if (filterType === 'month') {
+          const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+          start = new Date(firstDay.setHours(0,0,0,0)).toISOString();
+          end = new Date(new Date().setHours(23,59,59,999)).toISOString();
+        } else {
+          start = customDate + 'T00:00:00';
+          end = customDate + 'T23:59:59';
+        }
+
+        try {
+          const [kasirRes, onlineRes] = await Promise.all([
+            db.from('transactions').select('*, transaction_items(*)').gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false }),
+            db.from('online_orders').select('*').gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false })
+          ]);
+          setDataKasir(kasirRes.data || []);
+          setDataOnline(onlineRes.data || []);
+        } catch (e) { console.error(e); }
         setLoading(false);
       };
 
-      useEffect(() => { load(); }, []);
+      useEffect(() => { loadData(); }, [filterType, customDate]);
 
-      const list = txList !== null ? txList : sessionTxs;
-      const totalAll = list.reduce((s, t) => s + (t.total || 0), 0);
-      const totalCash = list.filter(t => t.pay_method === 'Cash').reduce((s, t) => s + (t.total || 0), 0);
-      const totalNonCash = totalAll - totalCash;
+      const markPODelivered = async (type, id) => {
+        if (!confirm("Tandai pesanan PO ini sudah diserahkan?")) return;
+        try {
+          if (type === 'kasir') await db.from('transactions').update({ po_status: 'delivered' }).eq('id', id);
+          else await db.from('online_orders').update({ po_status: 'delivered' }).eq('id', id);
+          loadData();
+        } catch(e) { alert("Gagal update PO: " + e.message); }
+      };
 
-      const soldSummary = {};
-      list.forEach(t => {
-        (t.transaction_items || []).forEach(i => {
-          const key = `${i.name}${i.variant_name ? ` (${i.variant_name})` : ''}`;
-          if (!soldSummary[key]) soldSummary[key] = { name: i.name, variant: i.variant_name, qty: 0, total: 0 };
-          soldSummary[key].qty += i.qty;
-          soldSummary[key].total += (i.qty * i.price);
-        });
-      });
-      const soldList = Object.values(soldSummary).sort((a, b) => b.qty - a.qty);
+      const cancelTx = async (type, id) => {
+        if (!confirm("Apakah Anda yakin ingin membatalkan transaksi ini?")) return;
+        try {
+          if (type === 'kasir') await db.from('transactions').update({ status: 'cancelled' }).eq('id', id);
+          else await db.from('online_orders').update({ status: 'cancelled' }).eq('id', id);
+          loadData();
+        } catch(e) { alert("Gagal membatalkan: " + e.message); }
+      };
 
-      const shareWA = (t) => {
-        const items = (t.transaction_items || []).map(i => `${i.name}${i.variant_name ? ` (${i.variant_name})` : ''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
-        const text = `*${(settings?.store_name || 'Toko Azzahro').toUpperCase()}*\n\nNo: ${t.tx_code}\nKasir: ${t.cashier_name}\nTgl: ${new Date(t.created_at).toLocaleDateString('id-ID')}\n\n--- ITEM ---\n${items}\n\nTotal: ${fmt(t.total)}\nBayar: ${t.pay_method}\n\n${settings?.store_footer || 'Terima kasih!'}`;
-        const phone = t.customer_id ? customers.find(c => c.id === t.customer_id)?.phone : null;
+      const confirmOnlineOrder = (t) => {
+        const items = (t.items_json || []).map(i => `${i.name}${i.variant_name || i.vName ? ` (${i.variant_name || i.vName})` : ''}: ${i.qty}x ${fmt(i.price)}`).join('\n');
+        const total = fmt(t.total_amount);
+        const text = `Halo ${t.customer_name},\n\nTerima kasih telah memesan di *${settings?.store_name || 'Toko Azzahro'}*. Pesanan Anda dengan kode *${t.order_code}* telah kami terima dan *BARANG READY* siap untuk diproses.\n\n--- DETAIL PESANAN ---\n${items}\n\n*Total Tagihan: ${total}*\n\nSilakan pilih opsi pembayaran berikut:\n1. *Cash* (Bayar di toko saat pengambilan)\n2. *Transfer Bank* (BCA/Mandiri/dsb)\n3. *QRIS* (Scan barcode yang akan kami kirimkan)\n\nMohon balas pesan ini dengan metode pembayaran yang dipilih. Jika melalui Transfer/QRIS, mohon sertakan juga bukti pembayarannya.\n\nTerima kasih!`;
+        const phone = t.customer_id_input;
         window.open(`https://wa.me/${phone ? phone.replace(/[^0-9]/g, '') : ''}?text=${encodeURIComponent(text)}`);
       };
 
+      const toggleExpand = (id) => {
+        setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+      };
+
+      let displayList = [];
+      if (tab === 'belum_selesai') {
+        const kPending = dataKasir.filter(t => t.status === 'pending').map(t => ({ ...t, _type: 'kasir' }));
+        const oPending = dataOnline.filter(t => t.status === 'pending' || t.status === 'processed').map(t => ({ ...t, _type: 'online' }));
+        displayList = [...kPending, ...oPending].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      } else if (tab === 'selesai') {
+        const kSelesai = dataKasir.filter(t => t.status === 'completed').map(t => ({ ...t, _type: 'kasir' }));
+        const oSelesai = dataOnline.filter(t => t.status === 'completed').map(t => ({ ...t, _type: 'online' }));
+        displayList = [...kSelesai, ...oSelesai].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      } else if (tab === 'dibatalkan') {
+        const kCancel = dataKasir.filter(t => t.status === 'cancelled').map(t => ({ ...t, _type: 'kasir' }));
+        const oCancel = dataOnline.filter(t => t.status === 'cancelled').map(t => ({ ...t, _type: 'online' }));
+        displayList = [...kCancel, ...oCancel].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      } else if (tab === 'po') {
+        const kPO = dataKasir.filter(t => t.po_status === 'pending').map(t => ({ ...t, _type: 'kasir' }));
+        const oPO = dataOnline.filter(t => t.po_status === 'pending').map(t => ({ ...t, _type: 'online' }));
+        displayList = [...kPO, ...oPO].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      }
+
       return (
-        <div>
-          <div className="flex gap-2 mb-3">
-            <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand/30" />
-            <button onClick={load} disabled={loading} className="px-4 py-2 bg-brand text-white rounded-xl text-xs font-bold shadow-sm hover:bg-brand/90 transition-all">
-              {loading ? '...' : 'Lihat'}
+        <div className="flex flex-col h-full bg-gray-50/50">
+          <div className="flex flex-col sm:flex-row gap-2 mb-4 p-1">
+            <select value={filterType} onChange={e => setFilterType(e.target.value)} className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:ring-2 outline-none flex-1 shadow-sm">
+              <option value="today">Hari Ini</option>
+              <option value="week">Minggu Ini</option>
+              <option value="month">Bulan Ini</option>
+              <option value="custom">Custom Tanggal</option>
+            </select>
+            {filterType === 'custom' && <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:ring-2 outline-none flex-1 shadow-sm" />}
+            <button onClick={loadData} disabled={loading} className="px-4 py-2 bg-brand text-white rounded-lg text-xs font-bold shadow-sm flex items-center justify-center">
+              {loading ? 'Memuat...' : 'Refresh'}
             </button>
           </div>
 
-          <div className="flex bg-gray-100 p-1 rounded-xl mb-4">
-            <button onClick={() => setTab('tx')} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'tx' ? 'bg-white text-brand shadow-sm' : 'text-gray-400'}`}>📜 Transaksi</button>
-            <button onClick={() => setTab('items')} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'items' ? 'bg-white text-brand shadow-sm' : 'text-gray-400'}`}>📦 Barang</button>
+          <div className="flex bg-white p-1 rounded-xl mb-4 shrink-0 shadow-sm border border-gray-100 overflow-x-auto hide-scrollbar">
+            <button onClick={() => setTab('belum_selesai')} className={`flex-1 min-w-max px-3 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'belum_selesai' ? 'bg-brand text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>Belum Selesai</button>
+            <button onClick={() => setTab('selesai')} className={`flex-1 min-w-max px-3 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'selesai' ? 'bg-brand text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>Selesai</button>
+            <button onClick={() => setTab('dibatalkan')} className={`flex-1 min-w-max px-3 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'dibatalkan' ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500 hover:bg-red-50'}`}>Dibatalkan</button>
+            <button onClick={() => setTab('po')} className={`flex-1 min-w-max px-3 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${tab === 'po' ? 'bg-purple-500 text-white shadow-sm' : 'text-gray-500 hover:bg-purple-50'}`}>Monitor PO</button>
           </div>
 
-          {list.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              <div className="bg-brandLight rounded-xl p-3 border border-brand/10 text-center">
-                <div className="text-[9px] font-bold text-brand/60 uppercase tracking-widest">Transaksi</div>
-                <div className="font-black text-lg text-brand">{list.length}</div>
-              </div>
-              <div className="bg-green-50 rounded-xl p-3 border border-green-100 text-center">
-                <div className="text-[9px] font-bold text-green-600/70 uppercase tracking-widest">Cash</div>
-                <div className="font-black text-sm text-green-700">{fmt(totalCash)}</div>
-              </div>
-              <div className="bg-blue-50 rounded-xl p-3 border border-blue-100 text-center">
-                <div className="text-[9px] font-bold text-blue-600/70 uppercase tracking-widest">Non-Cash</div>
-                <div className="font-black text-sm text-blue-700">{fmt(totalNonCash)}</div>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-            {loading ? (
-              <div className="flex justify-center py-6">
-                <div className="w-6 h-6 border-4 border-gray-200 border-t-brand rounded-full animate-spin"></div>
-              </div>
-            ) : list.length === 0 ? (
-              <div className="text-center text-gray-400 py-8 italic text-sm">Tidak ada data pada tanggal ini</div>
-            ) : tab === 'tx' ? (
-              list.map(t => (
-                <div key={t.id} className="p-3 bg-white border border-gray-100 rounded-xl shadow-sm hover:border-brand/30 transition-all">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="text-[10px] font-mono text-gray-400 uppercase tracking-wider">#{t.tx_code || t.id}</div>
-                      <div className="font-bold text-gray-800 text-xs">{t.customer_name || 'Umum'}</div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">{t.cashier_name} · {new Date(t.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1 pb-4">
+            {displayList.length === 0 && !loading && <div className="text-center text-gray-400 py-10 text-sm font-medium">Tidak ada transaksi.</div>}
+            {displayList.map(t => (
+              <div key={t.id} className="bg-white border border-gray-200 rounded-xl shadow-sm hover:border-brand/30 transition-all flex flex-col overflow-hidden">
+                <div className="p-3 flex justify-between items-start cursor-pointer" onClick={() => toggleExpand(t.id)}>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${t._type === 'online' ? 'bg-blue-100 text-blue-700' : (t.status === 'pending' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600')}`}>
+                        {t._type === 'online' ? 'Order Online' : (t.status === 'pending' ? 'Pending' : 'Kasir')}
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-gray-500">{t.tx_code || t.order_code}</span>
+                      {t.status === 'cancelled' && <span className="text-[9px] font-black px-2 py-0.5 rounded uppercase bg-red-100 text-red-700">Dibatalkan</span>}
                     </div>
-                    <div className="text-right">
-                      <div className="font-black text-sm" style={{ color }}>{fmt(t.total)}</div>
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.pay_method === 'Cash' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{t.pay_method}</span>
-                    </div>
+                    <div className="font-extrabold text-gray-800 text-sm">{t.customer_name || 'Umum'}</div>
+                    <div className="text-[10px] text-gray-500">{new Date(t.created_at).toLocaleString('id-ID')}</div>
                   </div>
-                  {(t.transaction_items || []).length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-gray-50 text-[10px] text-gray-500 space-y-0.5">
-                      {t.transaction_items.map((i, idx) => (
-                        <div key={idx} className="flex justify-between"><span>{i.name}{i.variant_name ? ` (${i.variant_name})` : ''}</span><span>{i.qty}x</span></div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-1.5 mt-2">
-                    <button onClick={() => { setTxData({ ...t, items: t.transaction_items || [] }); setModal('receipt'); }} className="flex-1 py-1.5 bg-gray-50 text-gray-600 rounded-lg border border-gray-200 text-[10px] font-bold flex items-center justify-center gap-1">
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                      Struk
-                    </button>
-                    <button onClick={() => shareWA(t)} className="flex-1 py-1.5 bg-green-50 text-green-700 rounded-lg border border-green-100 text-[10px] font-bold flex items-center justify-center gap-1">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                      WA
+                  <div className="text-right flex flex-col items-end">
+                    <div className="font-black text-brand text-base">{fmt(t.total || t.total_amount)}</div>
+                    {t.po_status === 'pending' && <div className="mt-1"><span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Menunggu PO</span></div>}
+                    <button className="mt-2 text-gray-400 hover:text-gray-600 p-1">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${expanded[t.id] ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
                     </button>
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-gray-50 border-b border-gray-100">
-                    <tr>
-                      <th className="px-3 py-2 text-[9px] font-black uppercase text-gray-400">Barang</th>
-                      <th className="px-3 py-2 text-[9px] font-black uppercase text-gray-400 text-center">Qty</th>
-                      <th className="px-3 py-2 text-[9px] font-black uppercase text-gray-400 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {soldList.map((i, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-3 py-2.5">
-                          <div className="font-bold text-gray-800 text-[11px] leading-tight">{i.name}</div>
-                          {i.variant && <div className="text-[9px] text-gray-400">{i.variant}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 text-center font-black text-gray-700 text-xs">{i.qty}</td>
-                        <td className="px-3 py-2.5 text-right font-bold text-brand text-xs">{fmt(i.total)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-gray-50 font-black border-t border-gray-100">
-                    <tr>
-                      <td className="px-3 py-2 text-[10px] uppercase text-gray-500">Total</td>
-                      <td className="px-3 py-2 text-center text-xs">{soldList.reduce((s,i)=>s+i.qty, 0)}</td>
-                      <td className="px-3 py-2 text-right text-xs" style={{ color }}>{fmt(soldList.reduce((s,i)=>s+i.total, 0))}</td>
-                    </tr>
-                  </tfoot>
-                </table>
+
+                {expanded[t.id] && (
+                  <div className="px-3 pb-3">
+                    <div className="bg-gray-50/80 rounded-lg p-2.5 mb-3 text-[10px] text-gray-600 space-y-1.5 border border-gray-100">
+                      {t._type === 'kasir' ? (
+                        t.transaction_items?.map((i, idx) => <div key={idx} className="flex justify-between"><span className="font-medium">{i.qty}x {i.name}{i.variant_name ? ` (${i.variant_name})` : ''}</span><span className="text-gray-400">{fmt(i.price * i.qty)}</span></div>)
+                      ) : (
+                        Array.isArray(t.items_json) && t.items_json.map((i, idx) => <div key={idx} className="flex justify-between"><span className="font-medium">{i.qty}x {i.name}{i.variant_name || i.vName ? ` (${i.variant_name || i.vName})` : ''}</span><span className="text-gray-400">{fmt(i.price * i.qty)}</span></div>)
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {t._type === 'kasir' && t.status === 'pending' && (
+                        <>
+                          <button onClick={() => { onResume(t); setModal(null); }} className="flex-1 py-2 bg-brand text-white rounded-lg text-xs font-bold shadow-sm min-w-[120px]">
+                            Lanjutkan Transaksi
+                          </button>
+                          <button onClick={() => cancelTx(t._type, t.id)} className="px-3 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold">
+                            Batalkan
+                          </button>
+                        </>
+                      )}
+                      {t._type === 'kasir' && t.status === 'completed' && (
+                        <button onClick={() => { setTxData({ ...t, items: t.transaction_items || [] }); setModal('receipt'); }} className="flex-1 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold min-w-[120px]">
+                          Cetak Struk
+                        </button>
+                      )}
+                      {t._type === 'online' && (t.status === 'pending' || t.status === 'processed') && (
+                        <>
+                          <button onClick={() => confirmOnlineOrder(t)} className="flex-1 py-1.5 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg text-xs font-bold min-w-[120px]">
+                            Konfirmasi (WA)
+                          </button>
+                          <button onClick={() => { onResume(t); setModal(null); }} className="flex-1 py-1.5 bg-brand text-white hover:bg-brand/90 rounded-lg text-xs font-bold min-w-[120px]">
+                            Proses & Bayar
+                          </button>
+                          <button onClick={() => cancelTx(t._type, t.id)} className="px-3 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold">
+                            Batalkan
+                          </button>
+                        </>
+                      )}
+                      {t.po_status === 'pending' && (
+                        <button onClick={() => markPODelivered(t._type, t.id)} className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold shadow-sm min-w-[120px]">
+                          Tandai Diserahkan
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            ))}
           </div>
         </div>
       );
     }
+
 
     function CloseSessionForm({ modal, onSubmit, fmt, color, cashiers }) {
       const [actCash, setActCash] = useState("");
@@ -553,11 +613,14 @@
       const [showCart, setShowCart] = useState(false);
       const [pointsRedeemed, setPointsRedeemed] = useState(0);
       const [showRedeem, setShowRedeem] = useState(false);
+      const [promoCode, setPromoCode] = useState("");
       const [etalase, setEtalase] = useState("Semua Etalase");
       const [onlineOrders, setOnlineOrders] = useState([]);
       const [onlineDateFilter, setOnlineDateFilter] = useState(new Date().toISOString().split('T')[0]);
       const [onlineStatusFilter, setOnlineStatusFilter] = useState("pending");
       const [activeOnlineOrder, setActiveOnlineOrder] = useState(null);
+      const [activeHoldTx, setActiveHoldTx] = useState(null);
+      const [printerSize, setPrinterSize] = useState("58mm");
       const CATS = settings?.product_categories ? ["Semua Produk", ...settings.product_categories.split(",").map(c => c.trim()).filter(Boolean)] : ["Semua Produk", "Air Zamzam", "Kurma", "Tasbih", "Sajadah", "Parfum", "Peci & Mukena", "Lainnya"];
       const ETALASE_LIST = settings?.product_etalase ? ["Semua Etalase", ...settings.product_etalase.split(",").map(c => c.trim()).filter(Boolean)] : ["Semua Etalase"];
 
@@ -585,14 +648,18 @@
           if (onlineDateFilter) {
             query = query.gte("created_at", onlineDateFilter + "T00:00:00").lte("created_at", onlineDateFilter + "T23:59:59");
           }
-          if (onlineStatusFilter && onlineStatusFilter !== "all") {
+          if (onlineStatusFilter && onlineStatusFilter !== "all" && onlineStatusFilter !== "po") {
             query = query.eq("status", onlineStatusFilter);
           } else {
             query = query.order("created_at", { ascending: false });
           }
           
           const { data } = await query.order("created_at", { ascending: onlineStatusFilter === "pending" });
-          setOnlineOrders(data || []);
+          let filteredOrders = data || [];
+          if (onlineStatusFilter === "po") {
+            filteredOrders = filteredOrders.filter(o => Array.isArray(o.items_json) && o.items_json.some(item => item.is_po));
+          }
+          setOnlineOrders(filteredOrders);
         } catch(e) { console.error("Error loading online orders", e); }
       };
       
@@ -651,11 +718,13 @@
           }
         });
         return Object.values(map).map(p => {
+          const firstVarImg = (p.variants || []).map(v => v.image_url).filter(Boolean)[0];
+          const coverImg = (p.image_url || '').split(',')[0].trim() || firstVarImg || '';
           if (p.variants && p.variants.length > 0) {
             const totalStock = p.variants.reduce((sum, v) => sum + (v.stock || 0), 0);
-            return { ...p, stock: totalStock };
+            return { ...p, stock: totalStock, cover_image: coverImg };
           }
-          return p;
+          return { ...p, cover_image: coverImg };
         });
       }, [products]);
 
@@ -665,7 +734,7 @@
       }, [grouped, search, cat, etalase]);
 
       const addFinal = (item) => {
-        if ((item.stock || 0) <= 0) return notify("Stok habis!");
+        if ((item.stock || 0) <= 0 && !item.is_po) return notify("Stok habis!");
         const ckey = item.sku;
         const normalPrice = item.price;
         const price = (item.promo_price && item.promo_price > 0) ? item.promo_price : item.price;
@@ -694,11 +763,55 @@
 
       const subtotal = cart.reduce((s, x) => s + (Number(x.normalPrice || x.price) || 0) * x.qty, 0);
       const productDiscount = cart.reduce((s, x) => s + (Math.max(0, Number(x.normalPrice || x.price) - Number(x.price || 0))) * x.qty, 0);
-      const { discountTotal, appliedPromos } = applyPromos(cart, promos);
+      const { discountTotal, appliedPromos, freeItems } = applyPromos(cart, promos, promoCode, products);
       const pointsDiscount = (Number(pointsRedeemed) || 0) * 100;
       const total = Math.max(0, subtotal - productDiscount - discountTotal - pointsDiscount);
       const pointsEarned = Math.floor(total / 10000) * (parseInt(settings?.points_per_10k) || 1);
       const selectedCustomer = useMemo(() => customers.find(c => String(c.id) === String(customer)), [customer, customers]);
+
+      const holdTransaction = async () => {
+        if (!servedBy) return notify("Pilih kasir terlebih dahulu!");
+        if (cart.length === 0) return notify("Keranjang kosong!");
+        setModal("loading");
+
+        const now = new Date();
+        const dateCode = now.getFullYear().toString().slice(-2) + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+        const timeCode = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+        const txCode = `HLD${dateCode}${timeCode}`;
+
+        const cust = selectedCustomer;
+        const servedName = servedBy || user.name;
+        const hasPO = cart.some(x => x.is_po);
+        
+        const payload = {
+          session_id: user.session_id, cashier_id: user.cashier_id, cashier_name: servedName,
+          customer_id: cust?.id || null, customer_name: cust?.name || null,
+          subtotal, discount_total: discountTotal + pointsDiscount, total,
+          pay_method: "Hold", cash_received: 0, change_amount: 0,
+          applied_promos: appliedPromos, tx_code: txCode,
+          points_earned: 0, points_redeemed: 0, notes_tx: notes,
+          status: 'pending',
+          po_status: hasPO ? 'pending' : 'none'
+        };
+
+        if (activeHoldTx) {
+          await db.from("transactions").delete().eq("id", activeHoldTx);
+          await db.from("transaction_items").delete().eq("transaction_id", activeHoldTx);
+        }
+
+        const { data: tx, error: err1 } = await db.from("transactions").insert(payload).select().single();
+        if (err1) { setModal(null); return notify("Gagal hold: " + err1.message); }
+
+        const allCartItems = [...cart, ...freeItems];
+        const items = allCartItems.map(x => ({ transaction_id: tx.id, product_id: x.id, sku: x.sku, name: x.name, variant_name: x.vName, price: x.price, qty: x.qty, subtotal: x.price * x.qty, is_po: x.is_po || false }));
+        await db.from("transaction_items").insert(items);
+
+        setModal(null);
+        notify("Pesanan berhasil disimpan (Pending).");
+        setCart([]); setCash(""); setCustomer(""); setTxType("Cash"); setServedBy(""); setPointsRedeemed(0); setNotes(""); setPromoCode("");
+        setActiveHoldTx(null);
+        loadSessionTxs();
+      };
 
       const processTx = async () => {
         if (!servedBy) return notify("Pilih kasir terlebih dahulu!");
@@ -727,7 +840,9 @@
           tx_code: txCode,
           points_earned: pointsEarned,
           points_redeemed: pointsRedeemed,
-          notes_tx: notes
+          notes_tx: notes,
+          status: 'completed',
+          po_status: cart.some(x => x.is_po) ? 'pending' : 'none'
         };
 
         const { data: tx, error: err1 } = await db.from("transactions").insert(payload).select().single();
@@ -737,11 +852,20 @@
         const servedByVal = servedBy || user.name;
         try { await db.from("transactions").update({ served_by: servedByVal }).eq("id", tx.id); } catch(_) {}
 
-        const items = cart.map(x => ({ transaction_id: tx.id, product_id: x.id, sku: x.sku, name: x.name, variant_name: x.vName, price: x.price, qty: x.qty, subtotal: x.price * x.qty }));
+        const allCartItems = [...cart, ...freeItems];
+        const items = allCartItems.map(x => ({ transaction_id: tx.id, product_id: x.id, sku: x.sku, name: x.name, variant_name: x.vName, price: x.price, qty: x.qty, subtotal: x.price * x.qty, is_po: x.is_po || false }));
         await db.from("transaction_items").insert(items);
 
+        // Update voucher usage_count if voucher was applied
+        if (promoCode) {
+           const appliedVoucher = promos.find(p => p.type === "voucher" && p.promo_code === promoCode);
+           if (appliedVoucher && appliedPromos.some(ap => ap.id === appliedVoucher.id)) {
+              await db.from("promos").update({ usage_count: (appliedVoucher.usage_count || 0) + 1 }).eq("id", appliedVoucher.id);
+           }
+        }
+
         // Update stok
-        for (const item of cart) {
+        for (const item of allCartItems) {
           await db.rpc("decrement_stock_by_sku", { p_sku: item.sku, p_qty: item.qty });
         }
 
@@ -762,7 +886,12 @@
           }
         }
 
-        setTxData({ ...tx, items, points_earned: pointsEarned, points_balance: (cust?.points || 0) - pointsRedeemed + pointsEarned });
+        if (activeHoldTx) {
+          await db.from("transaction_items").delete().eq("transaction_id", activeHoldTx);
+          await db.from("transactions").delete().eq("id", activeHoldTx);
+        }
+
+        setTxData({ ...tx, items: allCartItems, points_earned: pointsEarned, points_balance: (cust?.points || 0) - pointsRedeemed + pointsEarned });
         
         // Update Online Order if any
         if (activeOnlineOrder) {
@@ -771,7 +900,7 @@
           loadOnlineOrders();
         }
 
-        setCart([]); setCash(""); setCustomer(""); setTxType("Cash"); setServedBy(""); setPointsRedeemed(0); setNotes("");
+        setCart([]); setCash(""); setCustomer(""); setTxType("Cash"); setServedBy(""); setPointsRedeemed(0); setNotes(""); setPromoCode(""); setActiveHoldTx(null);
         loadAll();
         loadSessionTxs();
         setModal("receipt");
@@ -954,15 +1083,10 @@
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
                   <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari..." className="pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 w-full md:w-64 transition-all" style={{ '--tw-ring-color': color }} />
                 </div>
-                <button onClick={() => { loadOnlineOrders(); setModal("onlineOrders"); }} className="relative p-2.5 bg-blue-50 text-blue-600 rounded-xl font-bold border border-blue-100 hover:bg-blue-100 transition-all flex items-center gap-1.5 text-xs" title="Pesanan Online">
+                <button onClick={() => { loadOnlineOrders(); loadSessionTxs(); setShowSessionTxs(true); }} className="relative p-2.5 bg-blue-50 text-blue-600 rounded-xl font-bold border border-blue-100 hover:bg-blue-100 transition-all flex items-center gap-1.5 text-xs" title="Transaksi">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                  <span className="hidden sm:inline">Pesanan Online</span>
-                  {onlineOrders.filter(o => o.status === 'pending').length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[8px] font-black rounded-full flex items-center justify-center">{onlineOrders.filter(o => o.status === 'pending').length}</span>}
-                </button>
-                <button onClick={() => { loadSessionTxs(); setShowSessionTxs(true); }} className="relative p-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold border border-gray-200 hover:bg-gray-200 transition-all flex items-center gap-1.5 text-xs" title="Laporan Sesi">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
-                  <span className="hidden sm:inline">Laporan</span>
-                  {sessionTxs.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-brand text-white text-[8px] font-black rounded-full flex items-center justify-center">{sessionTxs.length}</span>}
+                  <span className="hidden sm:inline">Transaksi</span>
+                  {(onlineOrders.filter(o => o.status === 'pending').length + sessionTxs.filter(t => t.status === 'pending').length) > 0 && <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-red-500 text-white text-[8px] font-black rounded-full flex items-center justify-center px-1">{(onlineOrders.filter(o => o.status === 'pending').length + sessionTxs.filter(t => t.status === 'pending').length)}</span>}
                 </button>
                 <button onClick={closeSession} className="flex p-2.5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-xl font-bold border border-red-100 transition-all items-center gap-1.5 text-xs" title="Tutup Sesi">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
@@ -996,7 +1120,7 @@
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
                   {filtered.map(p => <div key={p.id} onClick={() => clickProd(p)} className="bg-white rounded-2xl p-2 border border-gray-200 cursor-pointer hover:border-brand hover:shadow-md transition-all group flex flex-col relative overflow-hidden">
                     <div className="aspect-square rounded-xl overflow-hidden mb-2 bg-gray-50 relative">
-                      <img src={p.image_url || `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" onError={e => e.target.src = `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} />
+                      <img src={p.cover_image || `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" onError={e => e.target.src = `https://placehold.co/150/1a6b3c/white?text=${p.name.slice(0, 2)}`} />
                       {(p.stock || 0) <= 0 && <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-[10px] tracking-widest backdrop-blur-[1px]">HABIS</div>}
                       {p.variants?.length > 0 && <div className="absolute top-1 right-1 bg-blue-500/90 text-white rounded-md px-1.5 py-0.5 text-[8px] font-bold shadow-sm">VAR</div>}
                       {p.is_po && <div className={`absolute top-1 ${p.variants?.length > 0 ? 'right-7' : 'right-1'} bg-purple-500/90 text-white rounded-md px-1.5 py-0.5 text-[8px] font-bold shadow-sm`}>PO</div>}
@@ -1040,7 +1164,7 @@
               {/* 1. Nama Kasir */}
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Nama Kasir *</label>
-                <select value={servedBy} onChange={e => setServedBy(e.target.value)} className={`w-full px-3 py-2 bg-white border rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 shadow-sm ${!servedBy ? 'border-orange-300 ring-2 ring-orange-100' : 'border-gray-200 focus:ring-brand/30'}`}>
+                <select value={servedBy} onChange={e => setServedBy(e.target.value)} className={`w-full px-4 py-3 bg-white border rounded-xl text-sm font-bold focus:outline-none focus:ring-2 shadow-sm ${!servedBy ? 'border-orange-300 ring-2 ring-orange-100' : 'border-gray-200 focus:ring-brand/30'}`}>
                   <option value="">-- Pilih Kasir --</option>
                   {cashiers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
@@ -1085,7 +1209,8 @@
             {/* 3. Keranjang Belanja */}
             <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-grayLight">
               {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60"><svg className="mb-4 opacity-50" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg><p className="font-medium">Belum ada pesanan</p></div> :
-                cart.map(x => <div key={x.ckey} className="bg-white rounded-xl p-3 border border-gray-100 shadow-sm relative overflow-hidden group">
+                <>
+                {cart.map(x => <div key={x.ckey} className="bg-white rounded-xl p-3 border border-gray-100 shadow-sm relative overflow-hidden group">
                   <div className="flex justify-between items-start mb-2">
                     <div className="pr-6">
                       <div className="font-bold text-gray-800 text-[13px] leading-tight">{x.name}{x.vName && <span className="text-brand"> ({x.vName})</span>}</div>
@@ -1102,6 +1227,19 @@
                     <div className="font-black text-[13px] text-gray-800">{fmt(x.price * x.qty)}</div>
                   </div>
                 </div>)}
+                {freeItems.map((x, i) => <div key={`free-${i}`} className="bg-orange-50 rounded-xl p-3 border border-orange-200 shadow-sm relative overflow-hidden">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <div className="font-bold text-gray-800 text-[13px] leading-tight">{x.name}{x.vName && <span className="text-brand"> ({x.vName})</span>}</div>
+                      <div className="text-[11px] font-extrabold mt-0.5 text-orange-600">Gratis (Bundling)</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="text-xs font-bold text-gray-600">Qty: {x.qty}</div>
+                    <div className="font-black text-[13px] text-gray-800 line-through opacity-50">{fmt(x.normalPrice)}</div>
+                  </div>
+                </div>)}
+                </>}
             </div>
 
             {/* 4. Catatan */}
@@ -1112,6 +1250,9 @@
 
             {/* 5. Subtotal dan Pembayaran */}
             <div className="p-4 bg-white border-t border-gray-100 shadow-[0_-10px_20px_rgba(0,0,0,0.02)] z-10 relative">
+              <div className="mb-3">
+                <input value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())} placeholder="Masukkan Kode Promo / Voucher" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-brand/30 uppercase text-brand" />
+              </div>
               {appliedPromos.length > 0 && <div className="bg-green-50 rounded-xl p-2 mb-3 border border-green-100/50">
                 {appliedPromos.map((p, i) => <div key={i} className="flex justify-between text-[10px] font-bold text-green-700"><span className="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>{p.name}</span><span>-{fmt(p.discount)}</span></div>)}
               </div>}
@@ -1135,10 +1276,16 @@
                    <span className="text-[10px] font-bold text-brand uppercase tracking-widest">+ Dapat {pointsEarned} Poin</span>
                 </div>
               )}
-              <button onClick={() => setModal("confirmTx")} disabled={cart.length === 0 || !servedBy} className="w-full py-4 bg-brand hover:bg-brand/90 text-white rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">
-                Lanjutkan
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-              </button>
+              <div className="flex gap-2">
+                <button onClick={holdTransaction} disabled={cart.length === 0 || !servedBy} className="w-1/3 py-4 bg-orange-100 hover:bg-orange-200 text-orange-600 rounded-xl font-black text-sm shadow-sm transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex flex-col items-center justify-center gap-0.5">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  <span>Simpan</span>
+                </button>
+                <button onClick={() => setModal("confirmTx")} disabled={cart.length === 0 || !servedBy} className="w-2/3 py-4 bg-brand hover:bg-brand/90 text-white rounded-xl font-black text-base shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2">
+                  Lanjutkan
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                </button>
+              </div>
               {txData && (
                 <div className="mt-2 text-center bg-green-50 py-2 rounded-xl border border-green-100 text-[10px] font-bold text-green-700 animate-fade-in">
                   Transaksi #{txData.tx_code} Selesai
@@ -1152,16 +1299,21 @@
 
           {variantPicker && <Modal onClose={() => setVariantPicker(null)} title="Pilih Varian Produk">
             <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
-              <img src={variantPicker.image_url || `https://placehold.co/80/1a6b3c/white?text=${variantPicker.name.slice(0, 2)}`} className="w-12 h-12 rounded-lg object-cover" onError={e => e.target.src = `https://placehold.co/80/1a6b3c/white?text=?`} />
+              <img src={(variantPicker.image_url||'').split(',')[0].trim() || `https://placehold.co/80/1a6b3c/white?text=${variantPicker.name.slice(0, 2)}`} className="w-12 h-12 rounded-lg object-cover" onError={e => e.target.src = `https://placehold.co/80/1a6b3c/white?text=?`} />
               <div><div className="font-bold text-gray-800 leading-tight">{variantPicker.name}</div><div className="text-xs text-gray-500 font-medium">Stok: {[variantPicker.stock, ...variantPicker.variants.map(v=>v.stock)].reduce((a,b)=>a+b,0)}</div></div>
             </div>
             <div className="grid grid-cols-1 gap-2">
               {variantPicker.variants.map((v, i) => <button key={i} onClick={() => addFinal(v)} className="text-left p-3 rounded-xl border-2 border-gray-100 hover:border-brand hover:bg-brandLight transition-all flex justify-between items-center group">
-                <div><div className="font-bold text-gray-800 group-hover:text-brand">{v.variant_name}</div>
-                <div className="flex gap-2 items-center mt-0.5">
-                  {v.sku && <div className="text-[10px] text-gray-400 font-mono">SKU: {v.sku}</div>}
-                  <div className="text-[10px] text-gray-500 font-medium">Stok: {v.stock}</div>
-                </div></div>
+                <div className="flex items-center gap-3">
+                  {v.image_url && <img src={v.image_url.split(',').pop().trim()} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0" />}
+                  <div>
+                    <div className="font-bold text-gray-800 group-hover:text-brand">{v.variant_name}</div>
+                    <div className="flex gap-2 items-center mt-0.5">
+                      {v.sku && <div className="text-[10px] text-gray-400 font-mono">SKU: {v.sku}</div>}
+                      <div className="text-[10px] text-gray-500 font-medium">Stok: {v.stock}</div>
+                    </div>
+                  </div>
+                </div>
                 <div className="flex flex-col items-end">
                   {(v.promo_price && v.promo_price > 0) ? (
                     <>
@@ -1182,24 +1334,33 @@
               <div className="font-black text-lg text-green-700">Pembayaran Berhasil</div>
               <div className="text-xs font-semibold mt-1 font-mono uppercase bg-white/50 text-green-600 inline-block px-2 py-0.5 rounded border border-green-200">#{txData.tx_code}</div>
             </div>
-            <div id="print-area" className="bg-white p-4 text-[10px] font-mono leading-relaxed border border-gray-200 shadow-sm mx-auto w-full max-w-[58mm]">
+            <div className="flex justify-center gap-2 mb-4">
+                <button onClick={() => setPrinterSize("58mm")} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${printerSize === "58mm" ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>58mm</button>
+                <button onClick={() => setPrinterSize("80mm")} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${printerSize === "80mm" ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>80mm</button>
+            </div>
+            <div id="print-area" className={`bg-white p-4 text-[10px] font-mono leading-relaxed border border-gray-200 shadow-sm mx-auto w-full ${printerSize === '80mm' ? 'max-w-[80mm]' : 'max-w-[58mm]'}`}>
               {settings?.store_logo && <div className="text-center mb-1"><img src={settings.store_logo} className="h-6 mx-auto grayscale" onError={e => e.target.style.display = "none"} /></div>}
               <div className="text-center font-bold text-xs mb-1 uppercase">{settings?.store_name || "Toko Azzahro"}</div>
               <div className="text-center mb-2 leading-tight px-2">{settings?.store_address || "Alamat Toko"}</div>
               <div className="border-t border-dashed border-gray-400 py-1 space-y-0.5 flex flex-col items-center">
+                <div className="w-full flex justify-between"><span>No:</span><span>{txData.tx_code}</span></div>
                 <div className="w-full flex justify-between"><span>Tgl:</span><span>{new Date().toLocaleDateString("id-ID")}</span></div>
                 <div className="w-full flex justify-between"><span>Kasir:</span><span>{txData.cashier_name}</span></div>
                 {txData.customer_name && <div className="w-full flex justify-between"><span>Plg:</span><span className="truncate max-w-[80px] text-right">{txData.customer_name}</span></div>}
               </div>
               <div className="border-t border-dashed border-gray-400 py-1 space-y-1">
-                {txData.items.map(i => <div key={i.id}><div className="truncate">{i.name}{i.variant_name ? ` (${i.variant_name})` : ""}</div><div className="flex justify-between pl-2"><span>{i.qty} x {fmt(i.price)}</span><span>{fmt(i.qty * i.price)}</span></div></div>)}
+                {txData.items.map((i, idx) => <div key={i.id || idx}><div className="truncate">{i.name}{i.variant_name || i.vName ? ` (${i.variant_name || i.vName})` : ""}</div><div className="flex justify-between pl-2"><span>{i.qty} x {(i.normalPrice && i.normalPrice > i.price) ? <span className="line-through text-gray-400 mr-1 text-[8px]">{fmt(i.normalPrice)}</span> : ""}{fmt(i.price)}</span><span>{fmt(i.qty * i.price)}</span></div></div>)}
               </div>
               <div className="border-t border-dashed border-gray-400 py-1">
                 <div className="flex justify-between font-bold"><span>TOTAL</span><span>{fmt(txData.total)}</span></div>
-                {txData.discount_total > 0 && <div className="flex justify-between text-[9px]"><span>DISKON</span><span>-{fmt(txData.discount_total)}</span></div>}
                 {txData.pay_method === "Cash" && <><div className="flex justify-between"><span>TUNAI</span><span>{fmt(txData.cash_received)}</span></div><div className="flex justify-between"><span>KEMBALI</span><span>{fmt(txData.change_amount)}</span></div></>}
+                {(() => {
+                  const productDisc = (txData.items || []).reduce((s, x) => s + (Math.max(0, Number(x.normalPrice || x.price) - Number(x.price || 0))) * x.qty, 0);
+                  const totHemat = (txData.discount_total || 0) + productDisc;
+                  return totHemat > 0 ? <div className="flex justify-between font-bold mt-1 text-[10px] text-brand border-t border-dotted border-gray-300 pt-1"><span>TOTAL HEMAT</span><span>{fmt(totHemat)}</span></div> : null;
+                })()}
               </div>
-              {(txData.points_earned > 0 || txData.points_redeemed > 0) && (
+              {txData.customer_name && (txData.points_earned > 0 || txData.points_redeemed > 0) && (
                 <div className="border-t border-dotted border-gray-400 py-1 text-center text-[9px]">
                    {txData.points_earned > 0 && <div>+ Untung {txData.points_earned} Poin</div>}
                    {txData.points_redeemed > 0 && <div>- Tukar {txData.points_redeemed} Poin</div>}
@@ -1232,8 +1393,26 @@
             </div>
           </Modal>}
 
-          {showSessionTxs && <Modal onClose={() => setShowSessionTxs(false)} title={`Laporan Sesi: ${user.name} — ${user.opened_by}`}>
-            <LaporanPanel sessionTxs={sessionTxs} loadSessionTxs={loadSessionTxs} user={user} setTxData={setTxData} setModal={setModal} fmt={fmt} db={db} color={color} settings={settings} customers={customers} />
+          {showSessionTxs && <Modal onClose={() => setShowSessionTxs(false)} title="Manajemen Transaksi & PO" full>
+            <TransaksiPanel user={user} db={db} color={color} settings={settings} customers={customers} fmt={fmt} setTxData={setTxData} setModal={setShowSessionTxs} onResume={(t) => {
+              if (t._type === 'online') {
+                setActiveOnlineOrder(t.id);
+                setActiveHoldTx(null);
+                setCustomer(t.customer_id_input || "");
+                setServedBy(user.name || "");
+                setNotes(t.notes || "");
+                const items = (t.items_json || []).map(i => ({ id: i.product_id || i.id, sku: i.sku, name: i.name, vName: i.variant_name || i.vName, normalPrice: i.price, price: i.price, qty: i.qty, ckey: i.sku, stock: 999, is_po: i.is_po || false }));
+                setCart(items);
+              } else {
+                setActiveHoldTx(t.id);
+                setActiveOnlineOrder(null);
+                setCustomer(t.customer_id ? String(t.customer_id) : "");
+                setServedBy(t.cashier_name || "");
+                setNotes(t.notes_tx || "");
+                const items = (t.transaction_items || []).map(i => ({ id: i.product_id, sku: i.sku, name: i.name, vName: i.variant_name, normalPrice: i.price, price: i.price, qty: i.qty, ckey: i.sku, stock: 999, is_po: i.is_po || false }));
+                setCart(items);
+              }
+            }} />
           </Modal>}
 
           {modal?.type === "closeSess" && <Modal onClose={() => setModal(null)} title={`Tutup Sesi: ${modal.cashier} — ${modal.openedBy}`}>
@@ -1257,6 +1436,15 @@
                           <div className="text-[10px] text-gray-500 font-medium">{item.qty} x {fmt(item.price)}</div>
                         </div>
                         <div className="font-black text-gray-700 shrink-0">{fmt(item.price * item.qty)}</div>
+                      </div>
+                    ))}
+                    {freeItems.map((item, i) => (
+                      <div key={`free-${i}`} className="flex justify-between items-start text-xs bg-orange-50 p-2 rounded-xl border border-orange-100">
+                        <div className="flex-1 min-w-0 pr-2">
+                          <div className="font-bold text-gray-800 truncate">{item.name}</div>
+                          <div className="text-[10px] text-orange-600 font-medium">Gratis Promo Bundling</div>
+                        </div>
+                        <div className="font-black text-gray-700 shrink-0">Rp 0</div>
                       </div>
                     ))}
                   </div>
@@ -1319,7 +1507,8 @@
                     Preview
                   </button>
                   <button onClick={() => {
-                    const itemsText = cart.map(i => `${i.name}: ${i.qty}x ${fmt(i.price)}`).join('\n');
+                    const allItems = [...cart, ...freeItems];
+                    const itemsText = allItems.map(i => `${i.name}: ${i.qty}x ${fmt(i.price)}`).join('\n');
                     const text = `*PREVIEW NOTA*\n${itemsText}\n\nTotal: ${fmt(total)}`;
                     const phone = selectedCustomer?.phone;
                     window.open(`https://wa.me/${phone ? phone.replace(/[^0-9]/g,'') : ''}?text=${encodeURIComponent(text)}`);
@@ -1348,149 +1537,6 @@
 
           {modal === "loading" && <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[300] flex items-center justify-center"><Spinner /></div>}
           
-          {modal === "onlineOrders" && (
-            <Modal onClose={() => setModal(null)} title="Manajemen Pesanan Online" full>
-              <div className="flex flex-col sm:flex-row gap-3 mb-6 bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                <div className="flex-1">
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Filter Tanggal</label>
-                  <input type="date" value={onlineDateFilter} onChange={e => setOnlineDateFilter(e.target.value)} className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-brand/20 outline-none" />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Filter Status</label>
-                  <select value={onlineStatusFilter} onChange={e => setOnlineStatusFilter(e.target.value)} className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-brand/20 outline-none">
-                    <option value="pending">Menunggu (Pending)</option>
-                    <option value="processed">Diproses (Cart)</option>
-                    <option value="completed">Selesai (Paid)</option>
-                    <option value="cancelled">Dibatalkan (Cancelled)</option>
-                    <option value="all">Semua Status</option>
-                  </select>
-                </div>
-              </div>
-
-              {onlineOrders.length === 0 ? (
-                <div className="text-center text-gray-400 py-10 flex flex-col items-center">
-                  <svg className="w-16 h-16 mb-4 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                  Belum ada pesanan online baru.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {onlineOrders.map(o => (
-                    <div key={o.id} className="bg-white border border-blue-100 rounded-xl p-4 shadow-sm flex flex-col hover:border-blue-300 transition-colors">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <div className="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase">{o.order_code}</div>
-                          <div className="font-extrabold text-gray-800 text-base mt-1">{o.customer_name}</div>
-                          <div className="text-xs text-gray-500 font-medium">
-                            {o.customer_type} • ID/HP: {o.customer_id_input || '-'}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-[10px] font-bold text-gray-400 mb-0.5">{new Date(o.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
-                          <div className="font-black text-brand text-lg">{fmt(o.total_amount)}</div>
-                        </div>
-                      </div>
-                      <div className="bg-gray-50 rounded-lg p-2 my-2 flex-1 text-xs text-gray-600 whitespace-pre-wrap max-h-32 overflow-y-auto border border-gray-100">
-                        <div className="font-bold text-gray-800 mb-1 border-b border-gray-200 pb-1">Pesanan:</div>
-                        {Array.isArray(o.items_json) && o.items_json.map((x, i) => (
-                          <div key={i} className="flex justify-between">
-                            <span>{x.qty}x {x.name}{x.vName ? ` (${x.vName})` : ''}</span>
-                          </div>
-                        ))}
-                        <div className="font-bold text-gray-800 mt-2 border-t border-gray-200 pt-1">Catatan/Alamat:</div>
-                        <div>Pengiriman: {o.shipping_method === 'pickup' ? 'Ambil di Toko' : 'Kirim (Ojol)'}</div>
-                        {o.notes}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 mt-2">
-                        {o.status === 'pending' && (
-                          <button onClick={() => processOnlineOrder(o)} className="col-span-2 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold shadow-md transition-colors flex items-center justify-center gap-2">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 13l4 4L19 7"/></svg>
-                            Proses ke Kasir
-                          </button>
-                        )}
-                        {o.status === 'processed' && (
-                          <div className="col-span-2 py-2 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl font-bold text-[10px] uppercase tracking-widest text-center shadow-sm flex items-center justify-center gap-1.5 mb-2">
-                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                             Sedang Diproses (Di Keranjang)
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                          <button onClick={() => {
-                            const items = (o.items_json||[]).map(x => `${x.qty}x ${x.name}`).join(', ');
-                            const msg = `Halo ${o.customer_name}, ini dari Azzahro mengenai pesanan Anda: ${o.order_code}\n\nItem: ${items}\nTotal: ${fmt(o.total_amount)}\n\nMohon ditunggu ya kak, pesanan sedang kami proses.`;
-                            const wa = o.customer_id_input || o.phone || "";
-                            window.open(`https://wa.me/${wa.replace(/[^0-9]/g,'')}?text=${encodeURIComponent(msg)}`);
-                          }} className="flex-1 py-2.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-xl font-bold text-[11px] border border-green-100 flex items-center justify-center gap-1.5 transition-colors">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                            Chat
-                          </button>
-                          {o.status === 'completed' ? (
-                            <div className="flex-[1.5] py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest text-center bg-green-50 text-green-600 border border-green-100 shadow-sm flex items-center justify-center gap-1.5">
-                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
-                               Selesai
-                            </div>
-                          ) : (
-                            o.status !== 'cancelled' && (
-                              <button onClick={() => { if(confirm('Batalkan pesanan ini?')) updateOnlineStatus(o.id, 'cancelled'); }} className="flex-1 py-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl font-bold text-[11px] border border-red-100 flex items-center justify-center gap-1.5 transition-colors">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                                Batalkan
-                              </button>
-                            )
-                          )}
-                          {o.status === 'cancelled' && (
-                            <div className="flex-1 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest text-center bg-gray-100 text-gray-400 border border-gray-200">
-                               Dibatalkan
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Modal>
-          )}
-
-          {showRedeem && selectedCustomer && (
-            <Modal onClose={() => setShowRedeem(false)} title="Tukar Poin">
-               <div className="space-y-4">
-                 <div className="bg-brandLight p-4 rounded-2xl border border-brand/10 text-center">
-                    <div className="text-xs font-bold text-brand/60 uppercase mb-1">Saldo Poin</div>
-                    <div className="text-3xl font-black text-brand">⭐ {selectedCustomer.points}</div>
-                    <div className="text-[10px] text-brand/50 mt-1 font-medium">1 Poin = Rp 100 Diskon</div>
-                 </div>
-                 <div>
-                   <label className="block text-xs font-bold text-gray-500 mb-2 uppercase text-center">Pilih Jumlah Poin</label>
-                   <div className="grid grid-cols-3 gap-2">
-                     {[10, 20, 50, 100, 200, 500].filter(n => n <= selectedCustomer.points).map(n => (
-                       <button key={n} onClick={() => { setPointsRedeemed(n); setShowRedeem(false); }} className="py-3 rounded-xl border-2 border-gray-100 font-black text-sm hover:border-brand hover:text-brand transition-all">
-                         {n}
-                       </button>
-                     ))}
-                   </div>
-                 </div>
-                 <div className="pt-2">
-                    <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Custom Poin</label>
-                    <div className="flex gap-2">
-                      <input type="number" value={pointsRedeemed} onChange={e => {
-                        const v = parseInt(e.target.value) || 0;
-                        setPointsRedeemed(v > selectedCustomer.points ? selectedCustomer.points : v);
-                      }} className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-brand focus:outline-none" />
-                      <button onClick={() => setShowRedeem(false)} className="px-6 bg-brand text-white font-bold rounded-xl text-sm">Gunakan</button>
-                    </div>
-                 </div>
-                 <button onClick={() => { setPointsRedeemed(0); setShowRedeem(false); }} className="w-full py-3 text-red-500 font-bold text-xs">Batal / Reset Poin</button>
-               </div>
-            </Modal>
-          )}
-          
-          {/* Floating Cart Button Mobile */}
-          {!showCart && (
-            <button onClick={() => setShowCart(true)} className="md:hidden fixed bottom-6 right-6 w-16 h-16 rounded-full text-white shadow-2xl flex flex-col items-center justify-center z-[150] active:scale-95 transition-transform" style={{ background: color }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg>
-              {cart.length > 0 && <span className="text-[10px] font-bold mt-1 leading-none">{fmt(total)}</span>}
-              {cart.length > 0 && <span className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white shadow-sm">{cart.reduce((s,x)=>s+x.qty,0)}</span>}
-            </button>
-          )}
         </div>
       );
     }
