@@ -162,22 +162,39 @@
       const content = (
         <div className="relative w-full overflow-hidden flex items-center justify-center p-6" style={{ height: 280, backgroundColor: b.bg_type === 'color' ? (b.bg_val || color) : '#111' }}>
           {b.bg_type === 'image' && b.bg_val && (
-            <div className="absolute inset-0 z-0 bg-cover bg-center opacity-40" style={{ backgroundImage: `url(${b.bg_val})` }} />
+            <div className="absolute inset-0 z-0 bg-cover bg-center" style={{ backgroundImage: `url(${b.bg_val})` }} />
           )}
           
-          <div className="relative z-10 flex flex-col md:flex-row items-center justify-between w-full h-full max-w-4xl gap-6">
-            <div className="flex-1 text-center md:text-left z-20">
-              {b.title && <div className="font-black text-2xl md:text-4xl leading-tight text-white mb-2 animate-fade-up drop-shadow-md">{b.title}</div>}
-              {b.subtitle && <div className="text-sm md:text-base font-medium text-white/90 animate-fade-up drop-shadow" style={{ animationDelay: '0.1s' }}>{b.subtitle}</div>}
-            </div>
-            {b.image && (
-              <div className="w-40 h-40 md:w-56 md:h-56 shrink-0 z-20 animate-fade-up" style={{ animationDelay: '0.2s' }}>
+          {/* Overlay */}
+          {b.overlay && (
+            <div className="absolute inset-0 z-0" style={{ backgroundColor: b.overlay_color || 'rgba(0,0,0,0.5)' }} />
+          )}
+          
+          <div className={`relative z-10 flex items-center justify-between w-full h-full max-w-4xl gap-6 ${
+            b.layout === 'img_left_text_right' ? 'flex-col-reverse md:flex-row-reverse' :
+            b.layout === 'text_only' ? 'flex-col justify-center text-center' :
+            b.layout === 'img_only' ? 'flex-col justify-center items-center' :
+            'flex-col md:flex-row'
+          }`}>
+            
+            {/* Text Section */}
+            {b.layout !== 'img_only' && (
+              <div className={`flex-1 z-20 ${b.layout === 'text_only' ? 'text-center' : 'text-center md:text-left'}`}>
+                {b.title && <div className="font-black text-2xl md:text-4xl leading-tight text-white mb-2 animate-fade-up drop-shadow-md">{b.title}</div>}
+                {b.subtitle && <div className="text-sm md:text-base font-medium text-white/90 animate-fade-up drop-shadow" style={{ animationDelay: '0.1s' }}>{b.subtitle}</div>}
+              </div>
+            )}
+            
+            {/* Image Section */}
+            {b.layout !== 'text_only' && b.image && (
+              <div className={`${b.layout === 'img_only' ? 'w-full h-full max-w-sm' : 'w-40 h-40 md:w-56 md:h-56'} shrink-0 z-20 animate-fade-up`} style={{ animationDelay: '0.2s' }}>
                 <img src={b.image} alt={b.title || ''} className="w-full h-full object-contain drop-shadow-2xl" onError={e => e.target.style.display='none'} />
               </div>
             )}
           </div>
 
-          <div className="absolute inset-0 z-0 bg-gradient-to-t from-black/40 to-transparent" />
+          {/* Default gradient overlay if no custom overlay */}
+          {!b.overlay && <div className="absolute inset-0 z-0 bg-gradient-to-t from-black/40 to-transparent" />}
           
           {banners.length > 1 && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 z-30">
@@ -280,7 +297,7 @@
                   <div className="text-xs font-black text-gray-500 uppercase tracking-wider mb-2">Pilih Varian</div>
                   <div className="grid grid-cols-1 gap-2">
                     {product.variants.map((v, i) => {
-                      const vHasPromo = v.promo_price && v.promo_price > 0 && v.promo_price < v.price;
+                      const vHasPromo = !!(v.promo_price && v.promo_price > 0 && v.promo_price < v.price);
                       const vPrice = vHasPromo ? v.promo_price : v.price;
                       const isOutOfStock = (v.stock || 0) <= 0 && !v.is_po;
                       return (
@@ -377,10 +394,33 @@
       const [detailProd, setDetailProd] = useState(null);
       const [toast, setToast] = useState("");
       const [layout, setLayout] = useState({ show_banner: true, show_category: true, show_etalase: true, default_view: "grid", hidden_etalases: [] });
+      const [isCompact, setIsCompact] = useState(false);
+      const [memberPoints, setMemberPoints] = useState(null);
+      const [etalaseOrder, setEtalaseOrder] = useState([]);
+      const [sectionOrder, setSectionOrder] = useState(["banner", "etalase", "produk"]);
 
       useEffect(() => { loadAll(); }, []);
+      
+      useEffect(() => {
+        const handleScroll = () => {
+          setIsCompact(window.scrollY > 300);
+        };
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
+      }, []);
       useEffect(() => { try { localStorage.setItem('az_cart', JSON.stringify(cart)); } catch {} }, [cart]);
       useEffect(() => { if (!layout.show_category) setCat("Semua"); }, [layout.show_category]);
+
+      // Deep-link: buka produk dari URL ?sku=
+      useEffect(() => {
+        if (loading || products.length === 0) return;
+        const params = new URLSearchParams(window.location.search);
+        const skuParam = params.get('sku');
+        if (!skuParam) return;
+        const prefix = skuParam.split('-')[0];
+        const found = grouped.find(p => (p.sku || '').split('-')[0] === prefix || p.sku === skuParam || p.id === skuParam);
+        if (found) { setDetailProd(found); window.history.replaceState({}, '', window.location.pathname); }
+      }, [loading, products]);
 
       const loadAll = async () => {
         setLoading(true);
@@ -409,6 +449,11 @@
           };
           setLayout(newLayout);
           setViewMode(newLayout.default_view);
+          // Simpan urutan etalase dari settings
+          const etOrder = (getS('product_etalase', '') || '').split(',').map(s => s.trim()).filter(Boolean);
+          setEtalaseOrder(etOrder);
+          const secOrder = (getS('catalog_section_order', '') || 'banner,etalase,produk').split(',').map(s => s.trim()).filter(Boolean);
+          setSectionOrder(secOrder);
         }
         setLoading(false);
       };
@@ -457,11 +502,18 @@
           map[p.etalase].push(p);
         });
         const hiddenEtalases = layout.hidden_etalases || [];
-        return Object.keys(map)
-          .filter(e => !hiddenEtalases.includes(e))
+        const allKeys = Object.keys(map).filter(e => !hiddenEtalases.includes(e));
+        // Urutkan sesuai product_etalase, sisanya di bawah
+        const ordered = etalaseOrder.length > 0
+          ? [
+              ...etalaseOrder.filter(e => allKeys.includes(e)),
+              ...allKeys.filter(e => !etalaseOrder.includes(e))
+            ]
+          : allKeys;
+        return ordered
           .map(e => ({ name: e, products: map[e] }))
           .filter(e => e.products.length > 0);
-      }, [grouped, layout.hidden_etalases]);
+      }, [grouped, layout.hidden_etalases, etalaseOrder]);
 
       const categories = settings.product_categories
         ? ["Semua", ...settings.product_categories.split(",").map(c => c.trim()).filter(Boolean)]
@@ -531,18 +583,24 @@
         }
 
         // 2. Prepare WA Link
-        const items = cart.map(x => `• ${x.name}${x.vName ? ` (${x.vName})` : ""} x${x.qty} = ${fmt(x.price * x.qty)}`).join("\n");
+        const items = cart.map(x => {
+          const poLabel = x.is_po ? ' [PO]' : '';
+          const normalPriceNote = (x.normalPrice && x.normalPrice > x.price) ? ` (Normal: ${fmt(x.normalPrice)})` : '';
+          return `• ${x.name}${x.vName ? ` (${x.vName})` : ''}${poLabel} x${x.qty} = ${fmt(x.price * x.qty)}${normalPriceNote}`;
+        }).join("\n");
         const promoLines = appliedPromos.length > 0 ? `\n🏷️ Promo:\n${appliedPromos.map(p => `• ${p.name}: -${fmt(p.discount)}`).join("\n")}` : "";
         const shippingText = orderForm.shipping === "pickup" ? "Ambil di Toko" : "Kirim (Ojol dipesan sendiri)";
         const paymentInfo = (settings.store_bank_account || settings.store_qr_image) ? `\n\n*Informasi Pembayaran:*\n${settings.store_bank_account ? `💳 Transfer: ${settings.store_bank_account}\n` : ""}${settings.store_qr_image ? `🖼️ QR Code: ${settings.store_qr_image}\n` : ""}📍 Atau bayar langsung di Toko` : "";
+        const hasPO = cart.some(x => x.is_po);
+        const poNote = hasPO ? "\n\n⚠️ *Catatan:* Beberapa produk bertanda [PO] adalah Pre-Order, pengiriman menyesuaikan ketersediaan." : "";
         const msg = orderForm.method === "ringkasan"
-          ? `🛒 *PESANAN BARU*\n\n*No. Order:* ${orderCode}\n*Nama:* ${orderForm.name} (${orderForm.type})\n*ID/HP:* ${orderForm.customer_id_input || orderForm.phone || "-"}\n*Pengiriman:* ${shippingText}\n*Catatan:* ${orderForm.notes || "-"}\n\n*Detail:*\n${items}${promoLines}\n\n*Total: ${fmt(total)}*${paymentInfo}\n\nTerima kasih 🙏`
+          ? `🛒 *PESANAN BARU*\n\n*No. Order:* ${orderCode}\n*Nama:* ${orderForm.name} (${orderForm.type})\n*ID/HP:* ${orderForm.customer_id_input || orderForm.phone || "-"}\n*Pengiriman:* ${shippingText}\n*Catatan:* ${orderForm.notes || "-"}\n\n*Detail:*\n${items}${promoLines}\n\n*Total: ${fmt(total)}*${poNote}${paymentInfo}\n\nTerima kasih 🙏`
           : `Halo, saya ingin memesan:\n${items}\nTotal: ${fmt(total)}\nNama: ${orderForm.name}\nNo. Order: ${orderCode}${paymentInfo}`;
         
         const waLink = `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
         
         // 3. Update History
-        const newHistory = [{ code: orderCode, date: new Date().toISOString(), total: Math.round(total) }, ...history].slice(0, 10);
+        const newHistory = [{ code: orderCode, date: new Date().toISOString(), total: Math.round(total), status: 'pending' }, ...history].slice(0, 10);
         setHistory(newHistory);
         localStorage.setItem('az_history', JSON.stringify(newHistory));
 
@@ -560,44 +618,77 @@
           {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-dark text-white px-5 py-2.5 rounded-full z-[9999] text-sm font-medium shadow-xl whitespace-nowrap animate-fade-up">{toast}</div>}
 
           <div className="sticky top-0 left-0 right-0 z-50">
-            <div className="p-4 relative" style={{ background: color }}>
-              <div className="flex items-center justify-between mb-4 pointer-events-auto">
-                <div className="flex items-center gap-3">
-                  {settings.store_logo && <img src={settings.store_logo} alt="logo" className="h-10 w-10 bg-white/20 p-1 rounded-xl object-contain shadow-sm backdrop-blur-sm" />}
-                  <div>
-                    <h1 className="font-extrabold text-white text-lg tracking-tight leading-tight drop-shadow-md">{settings.store_name}</h1>
-                    <p className="text-white/80 text-[10px] font-bold tracking-wide drop-shadow-sm uppercase">{settings.store_tagline || "Pilihan Berkah"}</p>
+            <div className={`${isCompact ? 'p-2 h-[50px]' : 'p-4'} relative transition-all duration-300`} style={{ background: color }}>
+              {isCompact ? (
+                /* Compact Header: 1 Row */
+                <div className="flex items-center gap-3 pointer-events-auto w-full">
+                  {/* Logo & Name */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {settings.store_logo && <img src={settings.store_logo} alt="logo" className="h-8 w-8 object-contain" />}
+                    <h1 className="font-extrabold text-white text-sm tracking-tight leading-tight drop-shadow-md truncate max-w-[120px]">{settings.store_name}</h1>
                   </div>
+                  
+                  {/* Search */}
+                  <div className="relative flex-1">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari..." className="w-full pl-8 pr-3 py-1.5 bg-white/20 border border-white/10 text-white placeholder-white/70 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-white/40 transition-all backdrop-blur-md" />
+                  </div>
+                  
+                  {/* Cart */}
+                  <button onClick={() => setShowCart(true)} className="relative p-2 bg-white/10 hover:bg-white/20 transition-colors rounded-lg text-white flex items-center justify-center backdrop-blur-sm border border-white/10 shrink-0">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                    {cartCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-brand border-none shadow-sm">{cartCount}</span>}
+                  </button>
                 </div>
-                <button onClick={() => setShowCart(true)} className="relative p-2.5 bg-white/10 hover:bg-white/20 transition-colors rounded-xl text-white flex items-center justify-center backdrop-blur-sm border border-white/10">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-                  {cartCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-brand border-none shadow-sm">{cartCount}</span>}
-                </button>
-              </div>
+              ) : (
+                /* Full Header: 2 Rows */
+                <>
+                  <div className="flex items-center justify-between mb-4 pointer-events-auto">
+                    <div className="flex items-center gap-3">
+                      {settings.store_logo && <img src={settings.store_logo} alt="logo" className="h-10 w-10 object-contain" />}
+                      <div>
+                        <h1 className="font-extrabold text-white text-lg tracking-tight leading-tight drop-shadow-md">{settings.store_name}</h1>
+                        <p className="text-white/80 text-[10px] font-bold tracking-wide drop-shadow-sm uppercase">{settings.store_tagline || "Pilihan Berkah"}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setShowCart(true)} className="relative p-2.5 bg-white/10 hover:bg-white/20 transition-colors rounded-xl text-white flex items-center justify-center backdrop-blur-sm border border-white/10">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                      {cartCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-brand border-none shadow-sm">{cartCount}</span>}
+                    </button>
+                  </div>
 
-              <div className="flex gap-2 pointer-events-auto relative z-10">
-                <div className="relative flex-1">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></div>
-                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari oleh-oleh..." className="w-full pl-9 pr-4 py-2.5 bg-white/20 border border-white/10 text-white placeholder-white/70 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-white/40 transition-all backdrop-blur-md" />
-                </div>
-                <button onClick={() => setViewMode(v => v === "grid" ? "list" : "grid")} className="p-2.5 bg-white/20 hover:bg-white/30 border border-white/10 rounded-xl text-white transition-colors flex items-center justify-center backdrop-blur-md">
-                  {viewMode === "grid" ? <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg> : <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>}
-                </button>
-              </div>
-              
-              {layout.show_banner && (
-                <div className="absolute top-full left-0 right-0 h-10 pointer-events-none z-0" style={{ background: `linear-gradient(to bottom, ${color}, transparent)` }}></div>
+                  <div className="flex gap-2 pointer-events-auto relative z-10">
+                    <div className="relative flex-1">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></div>
+                      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari oleh-oleh..." className="w-full pl-9 pr-4 py-2.5 bg-white/20 border border-white/10 text-white placeholder-white/70 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-white/40 transition-all backdrop-blur-md" />
+                    </div>
+                  </div>
+                  
+                  {layout.show_banner && (
+                    <div className="absolute top-full left-0 right-0 h-10 pointer-events-none z-0" style={{ background: `linear-gradient(to bottom, ${color}, transparent)` }}></div>
+                  )}
+                </>
               )}
             </div>
           </div>
 
-          {layout.show_banner && (
-            <div className="-mt-4 relative z-0">
-              <BannerCarousel banners={banners} color={color} />
-            </div>
-          )}
 
-          {layout.show_etalase && etalases.length > 0 && !search && (
+          {(() => {
+            const sectionMap = {
+              banner: (
+                <>
+                  {layout.show_banner && (
+                    <div className="-mt-4 relative z-0">
+                      <BannerCarousel banners={banners} color={color} />
+                    </div>
+                  )}
+                </>
+              ),
+              etalase: (
+                <>
+                  {layout.show_etalase && etalases.length > 0 && !search && (
             <div className="flex flex-col mt-2 mb-2 pt-2 gap-5">
               {etalases.map(et => (
                 <div key={et.name} className="flex flex-col">
@@ -640,16 +731,24 @@
               ))}
             </div>
           )}
-
-          {layout.show_category && (
-            <div className="px-4 py-3 flex gap-2 overflow-x-auto no-scrollbar bg-grayLight sticky top-0 z-40">
-              {categories.map(c => (
-                <button key={c} onClick={() => setCat(c)} className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shadow-sm ${cat === c ? 'text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-100'}`} style={cat === c ? { background: color } : {}}>{c}</button>
-              ))}
+                </>
+              ),
+              produk: (
+                <>
+                  {layout.show_category && (
+            <div className={`px-4 py-2 bg-grayLight flex items-center gap-2 border-b border-gray-100 sticky ${isCompact ? 'top-[50px]' : 'top-[128px]'} z-40 transition-all duration-300`}>
+              <div className="flex-1 flex gap-2 overflow-x-auto no-scrollbar">
+                {categories.map(c => (
+                  <button key={c} onClick={() => setCat(c)} className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shadow-sm ${cat === c ? 'text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-100'}`} style={cat === c ? { background: color } : {}}>{c}</button>
+                ))}
+              </div>
+              {/* View Toggle Button */}
+              <button onClick={() => setViewMode(v => v === "grid" ? "list" : "grid")} className="p-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg text-gray-600 transition-colors flex items-center justify-center shadow-sm shrink-0">
+                {viewMode === "grid" ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>}
+              </button>
             </div>
           )}
-
-          <div className="px-4 pb-24 flex-1">
+                  <div className="px-4 pb-24 flex-1">
             {loading ? <Spinner /> : filtered.length === 0 ?
               <div className="text-center text-gray-400 py-12 bg-white rounded-2xl border border-gray-100 mt-2">
                 <svg className="w-12 h-12 mx-auto text-gray-200 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
@@ -770,6 +869,17 @@
                 </div>
               )}
           </div>
+                </>
+              )
+            };
+            
+            return (
+              <>
+                {sectionOrder.map(key => sectionMap[key])}
+              </>
+            );
+          })()}
+    
 
           {detailProd && <ProductDetailModal product={detailProd} onClose={() => setDetailProd(null)} onAdd={addFinal} fmt={fmt} color={color} waNum={waNum} />}
 
@@ -812,6 +922,13 @@
                         <div>
                           <div className="text-xs font-black text-brand mb-0.5">{h.code}</div>
                           <div className="text-[10px] text-gray-500">{new Date(h.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                          <div className="mt-1">
+                            {h.status === 'delivered' ? (
+                              <span className="text-[9px] font-black uppercase bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Selesai</span>
+                            ) : (
+                              <span className="text-[9px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">⏳ Menunggu Konfirmasi</span>
+                            )}
+                          </div>
                         </div>
                         <div className="font-extrabold text-sm text-gray-800">{fmt(h.total)}</div>
                       </div>
@@ -828,6 +945,9 @@
                       </div>
                       <h4 className="font-bold text-gray-700">Keranjang Kosong</h4>
                       <p className="text-sm text-gray-500 mt-1">Belum ada produk yang ditambahkan.</p>
+                      <button onClick={() => setShowHistory(true)} className="mt-4 py-2 px-4 text-brand font-bold text-xs hover:underline uppercase tracking-widest border border-brand/20 rounded-xl bg-brandLight">
+                        📜 Lihat Riwayat Pesanan
+                      </button>
                     </div>
                   ) : (
                     <div className="flex flex-col">
@@ -900,9 +1020,15 @@
 
                   <div className="max-h-40 overflow-y-auto space-y-2 border-b border-gray-100 pb-4">
                     {cart.map(x => (
-                      <div key={x.ckey} className="flex justify-between text-xs">
-                        <span className="font-semibold text-gray-700">{x.qty}x {x.name}{x.vName ? ` (${x.vName})` : ''}</span>
-                        <span className="text-gray-500 font-bold">{fmt(x.price * x.qty)}</span>
+                      <div key={x.ckey} className="flex justify-between text-xs gap-2">
+                        <span className="font-semibold text-gray-700 flex items-center gap-1 flex-wrap">
+                          {x.qty}x {x.name}{x.vName ? ` (${x.vName})` : ''}
+                          {x.is_po && <span className="bg-purple-100 text-purple-700 font-black text-[9px] px-1.5 py-0.5 rounded uppercase tracking-wide">PO</span>}
+                        </span>
+                        <span className="text-gray-500 font-bold shrink-0">
+                          {fmt(x.price * x.qty)}
+                          {x.normalPrice > x.price && <div className="text-[9px] text-gray-400 line-through text-right">{fmt(x.normalPrice * x.qty)}</div>}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -922,15 +1048,20 @@
                           const val = e.target.value;
                           setOrderForm(p => ({ ...p, customer_id_input: val }));
                           if (val.length >= 4) {
-                            const { data } = await db.from("customers").select("name").or(`phone.eq.${val},customer_code.eq.${val}`).limit(1).maybeSingle();
-                            if (data) setOrderForm(p => ({ ...p, name: data.name }));
-                            else setOrderForm(p => ({ ...p, name: "-" }));
+                            const { data } = await db.from("customers").select("name, points").or(`phone.eq.${val},customer_code.eq.${val}`).limit(1).maybeSingle();
+                            if (data) { setOrderForm(p => ({ ...p, name: data.name })); setMemberPoints(data.points || 0); }
+                            else { setOrderForm(p => ({ ...p, name: "-" })); setMemberPoints(null); }
                           } else {
-                            setOrderForm(p => ({ ...p, name: "-" }));
+                            setOrderForm(p => ({ ...p, name: "-" })); setMemberPoints(null);
                           }
                         }} placeholder="08xxx / AZR-xxx" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:border-transparent transition-all" style={{ '--tw-ring-color': color }} />
                         {orderForm.name && orderForm.name !== "-" && orderForm.type === "Member" && (
-                          <div className="text-xs text-green-600 font-bold mt-1">Ditemukan: {orderForm.name}</div>
+                          <div className="mt-1.5 space-y-0.5">
+                            <div className="text-xs text-green-600 font-bold">✓ Ditemukan: {orderForm.name}</div>
+                            {memberPoints !== null && (
+                              <div className="text-xs text-brand font-semibold">⭐ Saldo Poin: {memberPoints} poin</div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
@@ -960,12 +1091,33 @@
                     </div>
                   </div>
 
+                  {/* PO warning */}
+                  {cart.some(x => x.is_po) && (
+                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-xs text-purple-700 font-semibold flex items-start gap-2">
+                      <span className="text-base leading-none">⚠️</span>
+                      <span>Pesanan ini mengandung produk <strong>Pre-Order (PO)</strong>. Estimasi pengiriman menyesuaikan ketersediaan stok dari supplier.</span>
+                    </div>
+                  )}
+
+                  {/* Potensi poin */}
+                  {(() => {
+                    const pointsPerTenK = parseInt(settings.points_per_10k) || 1;
+                    const potentialPoints = Math.floor(total / 10000) * pointsPerTenK;
+                    if (potentialPoints <= 0) return null;
+                    return (
+                      <div className="bg-brandLight border border-brand/20 rounded-xl p-3 text-xs text-brand font-semibold flex items-center gap-2">
+                        <span className="text-base">⭐</span>
+                        <span>Daftar atau login sebagai <strong>Member</strong> untuk mendapatkan <strong>{potentialPoints} poin</strong> dari pesanan ini!</span>
+                      </div>
+                    );
+                  })()}
+
                   <div className="flex gap-3 mt-4 pt-4 border-t border-gray-100">
                     <button onClick={() => setStep("catalog")} className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-colors">
                       ← Kembali
                     </button>
                     <button onClick={sendOrder} className="flex-[2] py-3.5 bg-[#25D366] hover:bg-[#20bd5a] text-white rounded-xl font-bold text-sm shadow-md transition-all flex justify-center items-center gap-2">
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.274.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.824zm-3.423-14.416c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm.029 18.88c-1.161 0-2.305-.292-3.318-.844l-3.677.964.984-3.595c-.607-1.052-.927-2.246-.926-3.468.001-5.824 4.74-10.563 10.581-10.563 5.824 0 10.564 4.741 10.564 10.564 0 5.824-4.74 10.564-10.564 10.564z" /></svg>
+                      <svg width="20" height="20" viewBox="0 0 32 32" fill="currentColor"><path d="M16 2C8.28 2 2 8.28 2 16c0 2.45.66 4.74 1.8 6.72L2 30l7.48-1.76A13.94 13.94 0 0016 30c7.72 0 14-6.28 14-14S23.72 2 16 2zm0 25.6a11.56 11.56 0 01-5.9-1.62l-.42-.25-4.44 1.05 1.08-4.32-.28-.44A11.56 11.56 0 014.4 16C4.4 9.6 9.6 4.4 16 4.4S27.6 9.6 27.6 16 22.4 27.6 16 27.6zm6.34-8.66c-.35-.17-2.06-1.02-2.38-1.13-.32-.12-.55-.17-.78.17-.23.35-.9 1.13-1.1 1.36-.2.23-.4.26-.75.09-.35-.17-1.47-.54-2.8-1.73-1.03-.92-1.73-2.06-1.93-2.41-.2-.35-.02-.54.15-.71.16-.16.35-.4.52-.6.17-.2.23-.35.35-.58.12-.23.06-.43-.03-.6-.09-.17-.78-1.87-1.07-2.56-.28-.67-.57-.58-.78-.59h-.66c-.23 0-.6.09-.91.43-.32.34-1.2 1.17-1.2 2.86 0 1.68 1.23 3.31 1.4 3.54.17.23 2.42 3.7 5.87 5.19.82.35 1.46.56 1.96.72.82.26 1.57.22 2.16.13.66-.1 2.06-.84 2.35-1.66.29-.81.29-1.51.2-1.66-.09-.15-.32-.24-.67-.41z"/></svg>
                       Kirim Pesanan WA
                     </button>
                   </div>

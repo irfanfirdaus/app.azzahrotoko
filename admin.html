@@ -190,25 +190,50 @@
       const [saving, setSaving] = useState(false);
 
       // ── ELEMENT (Banner, Etalase, Produk) ──
-      const parseBanners = () => { try { return JSON.parse(settings.banners || "[]"); } catch(_) { return []; } };
+      const parseBanners = () => { try { return JSON.parse((settings && settings.banners) || "[]"); } catch(_) { return []; } };
       const defaultLayout = { 
-        show_banner: settings.catalog_banner_active !== 'false', 
-        show_etalase: settings.catalog_etalase_active !== 'false', 
-        show_category: settings.catalog_show_category !== 'false', 
-        default_view: settings.catalog_default_view || "grid", 
-        hidden_etalases: (() => { try { return JSON.parse(settings.catalog_hidden_etalases || "[]"); } catch(_) { return []; } })()
+        show_banner: (settings && settings.catalog_banner_active) !== 'false', 
+        show_etalase: (settings && settings.catalog_etalase_active) !== 'false', 
+        show_category: (settings && settings.catalog_show_category) !== 'false', 
+        default_view: (settings && settings.catalog_default_view) || "grid", 
+        hidden_etalases: (() => { try { return JSON.parse((settings && settings.catalog_hidden_etalases) || "[]"); } catch(_) { return []; } })()
       };
-      const parseHiddenProds = () => { try { return JSON.parse(settings.catalog_hidden_products || "[]"); } catch(_) { return []; } };
+      const parseHiddenProds = () => { try { return JSON.parse((settings && settings.catalog_hidden_products) || "[]"); } catch(_) { return []; } };
 
       const [banners, setBanners] = useState(parseBanners);
-      const emptyBanner = { title: "", subtitle: "", image: "", link: "", bg_type: "color", bg_val: "#114232" };
+      const emptyBanner = { title: "", subtitle: "", image: "", link: "", bg_type: "color", bg_val: "#114232", layout: "text_left_img_right", overlay: false, overlay_color: "rgba(0,0,0,0.5)" };
       const [bForm, setBForm] = useState(emptyBanner);
       const [editIdx, setEditIdx] = useState(null);
       const [layout, setLayout] = useState(defaultLayout);
       const [hiddenProducts, setHiddenProducts] = useState(parseHiddenProds);
       const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
       const [showBannerForm, setShowBannerForm] = useState(false);
+
+      const moveBanner = (i, dir) => {
+        const newList = [...banners];
+        const target = i + dir;
+        if (target < 0 || target >= newList.length) return;
+        [newList[i], newList[target]] = [newList[target], newList[i]];
+        setBanners(newList);
+      };
+
+      const moveEtalase = async (idx, dir) => {
+        const dynamicEtalase = (settings.product_etalase || "").split(",").map(s => s.trim()).filter(Boolean);
+        const newList = [...dynamicEtalase];
+        const target = idx + dir;
+        if (target < 0 || target >= newList.length) return;
+        [newList[idx], newList[target]] = [newList[target], newList[idx]];
+        
+        const val = newList.join(', ');
+        const { error } = await db.from('settings').upsert({ key: 'product_etalase', value: val }, { onConflict: 'key' });
+        if (error) return notify("Gagal menyimpan urutan: " + error.message);
+        notify("Urutan etalase disimpan!");
+        onReload();
+      };
       const [mediaPickerTarget, setMediaPickerTarget] = useState(null);
+      const [sectionOrder, setSectionOrder] = useState(() => {
+        return (settings && settings.catalog_section_order) ? settings.catalog_section_order.split(",") : ["banner", "etalase", "produk"];
+      });
 
       // Generate etalases options from products
       const etalasesSet = new Set();
@@ -216,6 +241,7 @@
       const allEtalases = Array.from(etalasesSet);
 
       useEffect(() => {
+        if (!settings) return;
         setBanners(parseBanners());
         setLayout({
           show_banner: settings.catalog_banner_active !== 'false', 
@@ -225,7 +251,10 @@
           hidden_etalases: (() => { try { return JSON.parse(settings.catalog_hidden_etalases || "[]"); } catch(_) { return []; } })()
         });
         setHiddenProducts(parseHiddenProds());
+        setSectionOrder(settings.catalog_section_order ? settings.catalog_section_order.split(",") : ["banner", "etalase", "produk"]);
       }, [settings]);
+
+      if (!settings) return <div className="p-4 text-center text-gray-500">Memuat data...</div>;
 
       const saveElement = async () => {
         setSaving(true);
@@ -236,7 +265,8 @@
           { key: "catalog_hidden_etalases", value: JSON.stringify(layout.hidden_etalases) },
           { key: "catalog_show_category", value: String(layout.show_category) },
           { key: "catalog_default_view", value: layout.default_view },
-          { key: "catalog_hidden_products", value: JSON.stringify(hiddenProducts) }
+          { key: "catalog_hidden_products", value: JSON.stringify(hiddenProducts) },
+          { key: "catalog_section_order", value: sectionOrder.join(",") }
         ];
         for (const item of pairs) await db.from("settings").upsert(item, { onConflict: "key" });
         setSaving(false); notify("Pengaturan Element disimpan!"); onReload();
@@ -357,10 +387,9 @@
             <button onClick={() => setTab("maintenance")} className={tabCls("maintenance")}>🔧 Maintenance</button>
           </div>
 
-          {tab === "element" && (
-            <div className="space-y-6 animate-fade-up">
-              
-              {/* SECTION BANNER */}
+          {tab === "element" && (() => {
+            const bannerSection = (
+              /* SECTION BANNER */
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                   <div className="font-bold text-gray-800">Section Banner</div>
@@ -374,20 +403,24 @@
                     {banners.length > 0 && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                         {banners.map((b, i) => (
-                          <div key={i} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl shadow-sm relative overflow-hidden">
-                            {b.bg_type === 'image' ? (
-                              <div className="absolute inset-0 z-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${b.bg_val})`}}></div>
-                            ) : (
-                              <div className="absolute inset-0 z-0 opacity-10" style={{ backgroundColor: b.bg_val }}></div>
-                            )}
-                            <img src={b.image} className="w-12 h-12 object-cover rounded-lg bg-gray-100 z-10 shrink-0" onError={e=>e.target.style.display='none'}/>
-                            <div className="flex-1 min-w-0 z-10">
+                          <div key={i} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl shadow-sm relative">
+                            <div className="relative w-12 h-12 shrink-0">
+                              <img src={b.image} className="w-full h-full object-cover rounded-lg bg-gray-100 border border-gray-100" onError={e=>e.target.style.display='none'}/>
+                              {b.bg_type === 'color' ? (
+                                <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: b.bg_val }}></div>
+                              ) : (
+                                b.bg_val && <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white shadow-sm bg-cover bg-center" style={{ backgroundImage: `url(${b.bg_val})` }}></div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
                               <div className="font-bold text-sm text-gray-800 truncate">{b.title || 'Tanpa Judul'}</div>
                               <div className="text-xs text-gray-500 truncate">{b.subtitle}</div>
                             </div>
                             <div className="flex flex-col gap-1 z-10 shrink-0">
                               <button onClick={() => { editBanner(i); setShowBannerForm(true); }} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
                               <button onClick={() => delBanner(i)} className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
+                              <button disabled={i === 0} onClick={() => moveBanner(i, -1)} className="p-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 15l-6-6-6 6"/></svg></button>
+                              <button disabled={i === banners.length - 1} onClick={() => moveBanner(i, 1)} className="p-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg></button>
                             </div>
                           </div>
                         ))}
@@ -433,6 +466,28 @@
                               </div>
                             )}
                           </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Gaya Layout Banner</label>
+                            <select value={bForm.layout || 'text_left_img_right'} onChange={e => setBForm(p => ({ ...p, layout: e.target.value }))} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none">
+                              <option value="text_left_img_right">Teks Kiri, Gambar Kanan</option>
+                              <option value="img_left_text_right">Gambar Kiri, Teks Kanan</option>
+                              <option value="text_only">Hanya Teks (Tanpa Gambar)</option>
+                              <option value="img_only">Hanya Gambar (Tanpa Teks)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Overlay Warna</label>
+                            <div className="flex items-center gap-2">
+                              <input type="checkbox" checked={bForm.overlay || false} onChange={e => setBForm(p => ({ ...p, overlay: e.target.checked }))} className="w-4 h-4 text-brand focus:ring-brand" />
+                              <span className="text-sm text-gray-600">Gunakan Overlay</span>
+                            </div>
+                            {bForm.overlay && (
+                              <div className="flex gap-2 mt-2">
+                                <input type="color" value={bForm.overlay_color || '#000000'} onChange={e => setBForm(p => ({ ...p, overlay_color: e.target.value }))} className="w-10 h-9 rounded-lg border border-gray-200 cursor-pointer" />
+                                <input value={bForm.overlay_color || '#000000'} onChange={e => setBForm(p => ({ ...p, overlay_color: e.target.value }))} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none" placeholder="#000000" />
+                              </div>
+                            )}
+                          </div>
                           <div className="md:col-span-2"><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link Tautan (URL - Opsional)</label><input value={bForm.link} onChange={e => setBForm(p => ({ ...p, link: e.target.value }))} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" placeholder="https://..." /></div>
                         </div>
                         <div className="flex gap-2 justify-end mt-2">
@@ -441,12 +496,12 @@
                         </div>
                       </div>
                     )}
-
                   </div>
                 )}
               </div>
-
-              {/* SECTION ETALASE */}
+            );
+            const etalaseSection = (
+              /* SECTION ETALASE */
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                   <div className="font-bold text-gray-800">Section Etalase</div>
@@ -458,19 +513,31 @@
                 {layout.show_etalase && (
                   <div className="p-4">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2">Pilih Etalase yang Ditampilkan</label>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                      {allEtalases.map(e => (
-                        <label key={e} className={`flex items-center gap-2 p-3 border rounded-xl cursor-pointer transition-all ${!layout.hidden_etalases.includes(e) ? 'border-brand/50 bg-brand/5' : 'border-gray-200 hover:bg-gray-50'}`}>
-                          <input type="checkbox" checked={!layout.hidden_etalases.includes(e)} onChange={() => toggleEtalase(e)} className="w-4 h-4 text-brand rounded border-gray-300 focus:ring-brand" />
-                          <span className="text-sm font-bold text-gray-700">{e}</span>
-                        </label>
-                      ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {(() => {
+                        const dynamicEtalase = (settings.product_etalase || "").split(",").map(s => s.trim()).filter(Boolean);
+                        return dynamicEtalase.map((e, idx) => (
+                          <div key={e} className={`flex items-center gap-2 p-3 border rounded-xl transition-all ${!layout.hidden_etalases.includes(e) ? 'border-brand/50 bg-brand/5' : 'border-gray-200 hover:bg-gray-50'}`}>
+                            <input type="checkbox" checked={!layout.hidden_etalases.includes(e)} onChange={() => toggleEtalase(e)} className="w-4 h-4 text-brand rounded border-gray-300 focus:ring-brand" />
+                            <span className="text-sm font-bold text-gray-700 flex-1">{e}</span>
+                            <div className="flex flex-col gap-0.5 shrink-0">
+                              <button disabled={idx === 0} onClick={() => moveEtalase(idx, -1)} className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 15l-6-6-6 6"/></svg>
+                              </button>
+                              <button disabled={idx === dynamicEtalase.length - 1} onClick={() => moveEtalase(idx, 1)} className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 9l6 6 6-6"/></svg>
+                              </button>
+                            </div>
+                          </div>
+                        ));
+                      })()}
                     </div>
                   </div>
                 )}
               </div>
-
-              {/* SECTION PRODUK */}
+            );
+            const produkSection = (
+              /* SECTION PRODUK */
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50/50">
                   <div className="font-bold text-gray-800">Section Produk</div>
@@ -511,12 +578,52 @@
                   </div>
                 </div>
               </div>
+            );
+            
+            const sectionMap = {
+              banner: bannerSection,
+              etalase: etalaseSection,
+              produk: produkSection
+            };
+            
+            const moveSection = (idx, dir) => {
+              const newList = [...sectionOrder];
+              const item = newList.splice(idx, 1)[0];
+              newList.splice(idx + dir, 0, item);
+              setSectionOrder(newList);
+            };
+            
+            return (
+              <div className="space-y-6 animate-fade-up">
+                {/* UI to reorder */}
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+                  <div className="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wider">Urutan Tampilan Katalog</div>
+                  <div className="flex flex-col gap-2">
+                    {sectionOrder.map((sec, idx) => (
+                      <div key={sec} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-gray-400">#{idx+1}</span>
+                          <span className="text-sm font-bold text-gray-700 capitalize">{sec}</span>
+                        </div>
+                        <div className="flex gap-1">
+                          <button onClick={() => moveSection(idx, -1)} disabled={idx === 0} className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-lg text-gray-600 disabled:opacity-30 transition-colors hover:bg-gray-50">↑</button>
+                          <button onClick={() => moveSection(idx, 1)} disabled={idx === sectionOrder.length - 1} className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded-lg text-gray-600 disabled:opacity-30 transition-colors hover:bg-gray-50">↓</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
-              <button onClick={saveElement} disabled={saving} className="w-full py-4 bg-brand text-white font-bold rounded-2xl shadow-lg hover:bg-dark transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-                {saving ? "Menyimpan..." : <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan Element Katalog</>}
-              </button>
-            </div>
-          )}
+                {/* Render sections */}
+                {sectionOrder.map(key => sectionMap[key])}
+                
+                {/* Save button */}
+                <button onClick={saveElement} disabled={saving} className="w-full py-4 bg-brand text-white font-bold rounded-2xl shadow-lg hover:bg-dark transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  {saving ? "Menyimpan..." : <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan Element Katalog</>}
+                </button>
+              </div>
+            );
+          })()}
 
           {tab === "tentang" && (
             <div className="space-y-5 animate-fade-up">
@@ -675,6 +782,7 @@
       const [media, setMedia] = useState([]);
       const [loading, setLoading] = useState(true);
       const [uploading, setUploading] = useState(false);
+      const [previewMedia, setPreviewMedia] = useState(null);
 
       const cloudName = settings.cloudinary_cloud_name;
       const apiKey = settings.cloudinary_api_key;
@@ -711,7 +819,8 @@
             canvas.width = width; canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, width, height);
-            fileToUpload = canvas.toDataURL('image/jpeg', 0.7);
+            const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+            fileToUpload = canvas.toDataURL(outputType, outputType === 'image/jpeg' ? 0.7 : 1.0);
           }
 
           const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -735,11 +844,20 @@
           const data = await res.json();
 
           if (data.secure_url) {
+            const typeData = JSON.stringify({
+              type: 'image',
+              name: data.original_filename || file.name,
+              size: data.bytes || file.size,
+              width: data.width || width,
+              height: data.height || height
+            });
+            
             await db.from("media").insert({
               url: data.secure_url,
               public_id: data.public_id,
-              type: 'image'
+              type: typeData
             });
+            
             notify("Gambar berhasil di-upload!");
             loadMedia();
           } else {
@@ -798,23 +916,57 @@
 
           {loading ? <Spinner /> : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {media.map(m => (
-                <div key={m.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden group relative">
-                  <img src={m.url} className="w-full h-40 object-cover" alt="Media" />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
-                    <button onClick={() => window.open(m.url, '_blank')} className="p-2 bg-white rounded-full text-gray-700 hover:bg-gray-100">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M10 14L21 3M21 13v6a2 2 0 01-2-2H5a2 2 0 01-2-2V5a2 2 0 012-2h6"/></svg>
-                    </button>
-                    <button onClick={() => onDelete(m)} className="p-2 bg-red-500 rounded-full text-white hover:bg-red-600">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                    </button>
+              {media.map(m => {
+                let meta = { name: m.url.split('/').pop(), size: null, width: null, height: null };
+                try {
+                  const parsed = JSON.parse(m.type);
+                  if (parsed && typeof parsed === 'object') meta = { ...meta, ...parsed };
+                } catch(e) {}
+                
+                return (
+                  <div key={m.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden group relative flex flex-col">
+                    <img src={m.url} className="w-full h-40 object-cover" alt="Media" />
+                    <div className="p-2 text-[10px] text-gray-500 space-y-0.5">
+                      <div className="font-bold text-gray-700 truncate">{meta.name}</div>
+                      <div>{m.created_at ? new Date(m.created_at).toLocaleString("id-ID") : "-"}</div>
+                      <div>{meta.size ? (meta.size / 1024).toFixed(1) + " KB" : "-"} {meta.width ? `(${meta.width}x${meta.height})` : ""}</div>
+                    </div>
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
+                      <button onClick={() => setPreviewMedia({ ...m, ...meta })} className="p-2 bg-white rounded-full text-gray-700 hover:bg-gray-100">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      </button>
+                      <button onClick={() => window.open(m.url, '_blank')} className="p-2 bg-white rounded-full text-gray-700 hover:bg-gray-100">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M10 14L21 3M21 13v6a2 2 0 01-2-2H5a2 2 0 01-2-2V5a2 2 0 012-2h6"/></svg>
+                      </button>
+                      <button onClick={() => onDelete(m)} className="p-2 bg-red-500 rounded-full text-white hover:bg-red-600">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {media.length === 0 && (
                 <div className="col-span-2 md:col-span-4 text-center text-gray-400 py-10">Belum ada media. Silakan upload.</div>
               )}
             </div>
+          )}
+
+          {previewMedia && (
+            <Modal onClose={() => setPreviewMedia(null)} title={previewMedia.name || "Preview Media"} wide>
+              <div className="flex flex-col items-center gap-4">
+                <img src={previewMedia.url} className="max-w-full max-h-[70vh] object-contain rounded-xl" alt="Preview" />
+                <div className="text-sm text-gray-600 space-y-1 text-center">
+                  <div className="font-bold text-gray-800">{previewMedia.name || "Tanpa Nama"}</div>
+                  <div>Dimensi: {previewMedia.width || "-"} x {previewMedia.height || "-"} px</div>
+                  <div>Ukuran: {previewMedia.size ? (previewMedia.size / 1024).toFixed(1) + " KB" : "-"}</div>
+                  <div>Upload: {previewMedia.created_at ? new Date(previewMedia.created_at).toLocaleString("id-ID") : "-"}</div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => window.open(previewMedia.url, '_blank')} className="px-4 py-2 bg-brand text-white rounded-xl text-xs font-bold hover:bg-dark">Buka di Tab Baru</button>
+                  <button onClick={() => setPreviewMedia(null)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-xl text-xs font-bold">Tutup</button>
+                </div>
+              </div>
+            </Modal>
           )}
         </div>
       );
@@ -847,15 +999,26 @@
         setUploading(true);
         try {
           let fileToUpload = file;
-          if (file.type.startsWith('image/')) {
+          let width = 0;
+          let height = 0;
+          
+          if (file.type === 'image/png') {
+            fileToUpload = file; // Use original file to preserve transparency!
+            // Get dimensions
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            await new Promise(res => img.onload = res);
+            width = img.width;
+            height = img.height;
+          } else if (file.type.startsWith('image/')) {
             const img = new Image();
             img.src = URL.createObjectURL(file);
             await new Promise(res => img.onload = res);
             const canvas = document.createElement('canvas');
             const MAX_WIDTH = 800;
             const MAX_HEIGHT = 800;
-            let width = img.width;
-            let height = img.height;
+            width = img.width;
+            height = img.height;
             if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
             else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
             canvas.width = width; canvas.height = height;
@@ -997,6 +1160,8 @@
       ];
 
       const navItems = allPages.filter(p => role === "admin" ? !["laporan"].includes(p.id) : true);
+
+      if (!settings) return <div className="flex items-center justify-center min-h-screen bg-grayLight"><div className="text-gray-500 font-bold">Memuat data...</div></div>;
 
       return (
         <div className="min-h-screen bg-grayLight flex flex-col md:flex-row">
@@ -1720,6 +1885,8 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
       const [modal, setModal] = useState(null);
       const [form, setForm] = useState({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", promo_price: "", promo_percentage: "", stock: "", category: "Kurma", sub_category: "", weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "", etalase: "", is_po: false });
       const [search, setSearch] = useState("");
+      const [filterCategory, setFilterCategory] = useState("");
+      const [filterEtalase, setFilterEtalase] = useState("");
       const [saving, setSaving] = useState(false);
       const [showMenu, setShowMenu] = useState(false);
       const [activeTab, setActiveTab] = useState('daftar');
@@ -1776,7 +1943,14 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
         return Object.values(map).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
       }, [products]);
 
-      const filtered = grouped.filter(p => (p.name || "").toLowerCase().includes(search.toLowerCase()) || (p.sku || "").toLowerCase().includes(search.toLowerCase()) || (p.brand || "").toLowerCase().includes(search.toLowerCase()));
+      const filtered = grouped.filter(p => {
+        const matchesSearch = (p.name || "").toLowerCase().includes(search.toLowerCase()) || 
+                              (p.sku || "").toLowerCase().includes(search.toLowerCase()) || 
+                              (p.brand || "").toLowerCase().includes(search.toLowerCase());
+        const matchesCategory = !filterCategory || p.category === filterCategory;
+        const matchesEtalase = !filterEtalase || p.etalase === filterEtalase;
+        return matchesSearch && matchesCategory && matchesEtalase;
+      });
       const handleSKUChange = (val) => {
         const clean = val.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         setForm(f => ({ 
@@ -2040,8 +2214,18 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
 
           {activeTab === 'daftar' && (
             <>
-              <div className="flex gap-2 mb-4">
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / SKU..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
+              <div className="flex flex-col md:flex-row gap-2 mb-4">
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / SKU..." className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm" />
+                
+                <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm text-gray-600">
+                  <option value="">Semua Kategori</option>
+                  {dynamicCats.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+
+                <select value={filterEtalase} onChange={e => setFilterEtalase(e.target.value)} className="px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/30 outline-none shadow-sm text-gray-600">
+                  <option value="">Semua Etalase</option>
+                  {dynamicEtalase.map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
             <button onClick={() => { setModal("add"); setForm({ sku: "", name: "", brand: "", description: "", cost_price: "", price: "", promo_price: "", promo_percentage: "", stock: "", category: "Kurma", sub_category: "", etalase: "", is_po: false, weight: "", weight_unit: "g", has_variants: false, variant_types: [], variants: [], image_url: "" }); }} className="px-4 bg-brand text-white font-bold rounded-xl shadow-sm text-sm hover:opacity-90 active:scale-95 transition-all whitespace-nowrap">+ Tambah</button>
             <div className="relative">
               <button onClick={() => setShowMenu(m => !m)} className="px-3 bg-white border border-gray-200 text-gray-600 rounded-xl h-full font-bold shadow-sm hover:bg-gray-50 flex items-center justify-center">
@@ -2368,8 +2552,37 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-wrap gap-2 shrink-0 max-h-[150px] overflow-y-auto no-scrollbar">
-                    {etList.length === 0 ? <div className="text-xs text-gray-400 italic py-4 w-full text-center">Belum ada etalase. Klik "Edit Nama" untuk menambahkan.</div> : etList.map(et => <button key={et} onClick={() => setEtActive(et)} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${etActive === et ? 'bg-brand text-white shadow-md border-brand' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{et}</button>)}
+                  <div className="shrink-0 space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                    {etList.length === 0 ? (
+                      <div className="text-xs text-gray-400 italic py-4 w-full text-center">Belum ada etalase. Klik "Edit Nama" untuk menambahkan.</div>
+                    ) : etList.map((et, idx) => (
+                      <div key={et} className={`flex items-center gap-2 p-2 rounded-xl border transition-all ${etActive === et ? 'bg-brandLight border-brand/40' : 'bg-white border-gray-100 hover:border-gray-200'}`}>
+                        <div className="flex flex-col gap-0.5 shrink-0">
+                          <button disabled={idx === 0} onClick={() => {
+                            const newList = [...etList];
+                            [newList[idx-1], newList[idx]] = [newList[idx], newList[idx-1]];
+                            setEtList(newList);
+                            setEtNamesForm(newList.join(', '));
+                            db.from('settings').upsert({ key: 'product_etalase', value: newList.join(', ') }, { onConflict: 'key' });
+                          }} className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 15l-6-6-6 6"/></svg>
+                          </button>
+                          <button disabled={idx === etList.length - 1} onClick={() => {
+                            const newList = [...etList];
+                            [newList[idx], newList[idx+1]] = [newList[idx+1], newList[idx]];
+                            setEtList(newList);
+                            setEtNamesForm(newList.join(', '));
+                            db.from('settings').upsert({ key: 'product_etalase', value: newList.join(', ') }, { onConflict: 'key' });
+                          }} className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 9l6 6 6-6"/></svg>
+                          </button>
+                        </div>
+                        <button onClick={() => setEtActive(et)} className="flex-1 text-left text-xs font-bold text-gray-700 py-1 leading-snug">
+                          <span className="text-[9px] font-bold text-gray-400 mr-1">#{idx+1}</span>{et}
+                        </button>
+                        {etActive === et && <span className="text-[9px] bg-brand text-white px-2 py-0.5 rounded-full font-bold shrink-0">Aktif</span>}
+                      </div>
+                    ))}
                   </div>
 
                   {etActive && (
@@ -2907,16 +3120,52 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
     // ── LAPORAN ───────────────────────────────────────────────────
     function Laporan({ transactions, products, customers, notify, loading, color }) {
       const [tab, setTab] = useState("laporan");
-      const [range, setRange] = useState("today");
       const [txDetail, setTxDetail] = useState(null);
       const [commRate, setCommRate] = useState(parseFloat(localStorage.getItem('comm_rate') || '2.5'));
       const now = new Date();
 
+      const [filterType, setFilterType] = useState("waktu"); // waktu, bulan, tahun, custom
+      const [timeRange, setTimeRange] = useState("today"); // today, yesterday, 7days, 30days, etc.
+      const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+      const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+      const [startDate, setStartDate] = useState("");
+      const [endDate, setEndDate] = useState("");
+
       const filter = t => {
         const d = new Date(t.created_at);
-        if (range === "today") return d.toDateString() === now.toDateString();
-        if (range === "week") return (now - d) <= 7 * 864e5;
-        if (range === "month") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        const tDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const nDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        if (filterType === "waktu") {
+          if (timeRange === "today") return tDate.getTime() === nDate.getTime();
+          if (timeRange === "yesterday") {
+            const yesterday = new Date(nDate);
+            yesterday.setDate(yesterday.getDate() - 1);
+            return tDate.getTime() === yesterday.getTime();
+          }
+          if (timeRange === "7days") return (nDate - tDate) <= 7 * 864e5;
+          if (timeRange === "30days") return (nDate - tDate) <= 30 * 864e5;
+          if (timeRange === "60days") return (nDate - tDate) <= 60 * 864e5;
+          if (timeRange === "90days") return (nDate - tDate) <= 90 * 864e5;
+          if (timeRange === "360days") return (nDate - tDate) <= 360 * 864e5;
+        }
+        
+        if (filterType === "bulan") {
+          return d.getMonth() === parseInt(selectedMonth) && d.getFullYear() === parseInt(selectedYear);
+        }
+        
+        if (filterType === "tahun") {
+          return d.getFullYear() === parseInt(selectedYear);
+        }
+        
+        if (filterType === "custom") {
+          if (!startDate || !endDate) return true;
+          const s = new Date(startDate);
+          const e = new Date(endDate);
+          e.setHours(23, 59, 59, 999); // End of day
+          return d >= s && d <= e;
+        }
+        
         return true;
       };
 
@@ -2946,7 +3195,6 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
       };
 
       const R = ({ label, val, bold, c }) => <div className="flex justify-between items-center py-2.5 border-b border-gray-50 last:border-0 text-sm"><span className="text-gray-500 font-medium">{label}</span><span className={`${bold ? 'font-extrabold' : 'font-semibold'} ${c || 'text-gray-800'}`}>{val}</span></div>;
-      const rb = (id, l) => <button key={id} onClick={() => setRange(id)} className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${range === id ? 'bg-dark text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{l}</button>;
 
       // Per-kasir omzet dan komisi
       const cashierStats = {};
@@ -2974,8 +3222,66 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
             ))}
           </div>
 
+          {/* Filter UI */}
+          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm mb-4 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setFilterType("waktu")} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${filterType === "waktu" ? 'bg-dark text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Waktu</button>
+              <button onClick={() => setFilterType("bulan")} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${filterType === "bulan" ? 'bg-dark text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Bulan</button>
+              <button onClick={() => setFilterType("tahun")} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${filterType === "tahun" ? 'bg-dark text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Tahun</button>
+              <button onClick={() => setFilterType("custom")} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${filterType === "custom" ? 'bg-dark text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Custom</button>
+            </div>
+
+            {filterType === "waktu" && (
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  ["today", "Hari ini"],
+                  ["yesterday", "Kemarin"],
+                  ["7days", "7 Hari"],
+                  ["30days", "30 Hari"],
+                  ["60days", "60 Hari"],
+                  ["90days", "90 Hari"],
+                  ["360days", "360 Hari"]
+                ].map(([id, l]) => (
+                  <button key={id} onClick={() => setTimeRange(id)} className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-colors ${timeRange === id ? 'bg-brand text-white' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'}`}>{l}</button>
+                ))}
+              </div>
+            )}
+
+            {filterType === "bulan" && (
+              <div className="flex gap-2 items-center">
+                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand/30 outline-none">
+                  {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map((m, i) => (
+                    <option key={i} value={i}>{m}</option>
+                  ))}
+                </select>
+                <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand/30 outline-none">
+                  {[2024, 2025, 2026, 2027].map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {filterType === "tahun" && (
+              <div className="flex gap-2 items-center">
+                <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand/30 outline-none">
+                  {[2024, 2025, 2026, 2027].map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {filterType === "custom" && (
+              <div className="flex gap-2 items-center text-xs text-gray-500 font-bold">
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand/30 outline-none" />
+                <span>s/d</span>
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand/30 outline-none" />
+              </div>
+            )}
+          </div>
+
           {tab === "laporan" && <div className="space-y-4 animate-fade-up">
-            <div className="flex gap-2 flex-wrap mb-2">{[["today", "Hari ini"], ["week", "7 Hari"], ["month", "Bulan ini"], ["all", "Semua"]].map(([id, l]) => rb(id, l))}</div>
 
             <div className="grid grid-cols-2 gap-3">
               {[{ label: "Transaksi", val: filtered.length, c: "text-blue-500" }, { label: "Omzet", val: fmt(revenue), c: "text-green-600" }, { label: "Total Diskon", val: fmt(totalDisc), c: "text-red-500" }, { label: "Pelanggan", val: customers.length, c: "text-purple-500" }].map(s => <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
@@ -3002,7 +3308,6 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
           </div>}
 
           {tab === "transaksi" && <div className="space-y-4 animate-fade-up">
-            <div className="flex gap-2 flex-wrap mb-2">{[["today", "Hari ini"], ["week", "7 Hari"], ["month", "Bulan ini"], ["all", "Semua"]].map(([id, l]) => rb(id, l))}</div>
 
             {loading ? <Spinner /> : <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
               <div className="font-extrabold text-sm text-gray-800 mb-4 pb-3 border-b border-gray-100 flex justify-between">
@@ -3029,7 +3334,6 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
           </div>}
 
           {tab === "komisi" && <div className="space-y-4 animate-fade-up">
-            <div className="flex gap-2 flex-wrap mb-2">{[["today", "Hari ini"], ["week", "7 Hari"], ["month", "Bulan ini"], ["all", "Semua"]].map(([id, l]) => rb(id, l))}</div>
 
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
               <div className="font-extrabold text-sm text-gray-800 mb-4 uppercase tracking-wider flex items-center gap-2">
@@ -3475,7 +3779,7 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
 
           {tab === "toko" && <div className="animate-fade-up">
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-5 space-y-4">
-              {[{ label: "Nama Toko", key: "store_name", ph: "Toko Oleh-Oleh Haji & Umroh" }, { label: "Tagline", key: "store_tagline", ph: "Pilihan Berkah dari Tanah Suci" }, { label: "Alamat Lengkap", key: "store_address", ph: "Jl. Contoh No. 1, Semarang" }, { label: "No. Telepon", key: "store_phone", ph: "08xxxxxxxxxx" }, { label: "No. WhatsApp Admin", key: "wa_number", ph: "628xxxxxxxxxx" }, { label: "URL Logo (Image)", key: "store_logo", ph: "https://..." }, { label: "Nomor Rekening Bank", key: "store_bank_account", ph: "BCA 1234567890 a/n Toko Azzahro" }, { label: "URL Gambar QR Code (Pembayaran)", key: "store_qr_image", ph: "https://..." }].map(f => <div key={f.key}>
+              {[{ label: "Nama Toko", key: "store_name", ph: "Toko Oleh-Oleh Haji & Umroh" }, { label: "Tagline", key: "store_tagline", ph: "Pilihan Berkah dari Tanah Suci" }, { label: "Alamat Lengkap", key: "store_address", ph: "Jl. Contoh No. 1, Semarang" }, { label: "No. Telepon", key: "store_phone", ph: "08xxxxxxxxxx" }, { label: "No. WhatsApp Admin", key: "wa_number", ph: "628xxxxxxxxxx" }, { label: "URL Logo (Image)", key: "store_logo", ph: "https://..." }, { label: "Nomor Rekening Bank", key: "store_bank_account", ph: "BCA 1234567890 a/n Toko Azzahro" }, { label: "URL Gambar QR Code (Pembayaran)", key: "store_qr_image", ph: "https://..." }, { label: "Cloudinary Cloud Name", key: "cloudinary_cloud_name", ph: "dxxxxx" }, { label: "Cloudinary API Key", key: "cloudinary_api_key", ph: "xxxxxxxxxxxxxxx" }, { label: "Cloudinary API Secret", key: "cloudinary_api_secret", ph: "xxxxxxxxxxxxxxxxxxxxxxxxxxx" }].map(f => <div key={f.key}>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
                 {['store_logo', 'store_qr_image'].includes(f.key) ? (
                   <div className="flex gap-2">
@@ -3483,7 +3787,7 @@ function Dashboard({ products, transactions, customers, cashiers, sessions, sett
                     <button onClick={() => { setMediaPickerTarget(f.key); setMediaPickerOpen(true); }} className="bg-brand text-white px-4 py-3 rounded-xl text-xs font-bold hover:bg-dark">Pilih</button>
                   </div>
                 ) : (
-                  <input value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
+                  <input type={f.key === "cloudinary_api_secret" ? "password" : "text"} value={stForm[f.key] || ""} onChange={e => setStForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-dark/30" />
                 )}
               </div>)}
               {stForm.store_logo && <div className="pt-2">
